@@ -1446,10 +1446,11 @@ class Handler(SimpleHTTPRequestHandler):
                 set_settings(
                     {
                         "printer_base_url": base_url,
-                        "usage_monitor_enabled": "1",
+                        "usage_monitor_enabled": "0",
                     }
                 )
                 result = sync_printer_usage(base_url, reset=True)
+                set_setting("usage_monitor_enabled", "1")
                 ensure_usage_monitor()
                 self.send_json({**result, "monitor": usage_monitor_status(), **fetch_bootstrap()})
                 return
