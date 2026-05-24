@@ -1181,10 +1181,8 @@ def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sq
     return [(spool, amount) for spool, amount in allocations_by_id.values() if amount > 0]
 
 
-def sync_printer_usage(base_url: str, reset: bool = False) -> dict:
-    base_url = normalize_printer_base_url(base_url)
+def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
     with USAGE_MONITOR_LOCK:
-        snapshot = fetch_printer_usage_snapshot(base_url)
         if not snapshot["signature"]:
             set_setting("usage_monitor_last_message", "No active or recent print found.")
             return {"tracked": False, "deducted": 0, "message": "No active or recent print found.", "snapshot": snapshot}
@@ -1309,6 +1307,12 @@ def sync_printer_usage(base_url: str, reset: bool = False) -> dict:
             "message": message,
             "snapshot": snapshot,
         }
+
+
+def sync_printer_usage(base_url: str, reset: bool = False) -> dict:
+    base_url = normalize_printer_base_url(base_url)
+    snapshot = fetch_printer_usage_snapshot(base_url)
+    return apply_printer_usage_snapshot(snapshot, reset)
 
 
 def usage_monitor_status() -> dict:
@@ -1472,6 +1476,19 @@ class Handler(SimpleHTTPRequestHandler):
                     data.get("base_url") or get_setting("printer_base_url")
                 )
                 result = sync_printer_usage(base_url, reset=bool(data.get("reset")))
+                self.send_json({**result, "monitor": usage_monitor_status(), **fetch_bootstrap()})
+                return
+
+            if parsed.path == "/api/printer/usage/snapshot":
+                data = self.read_json()
+                snapshot = data.get("snapshot") or {}
+                if not isinstance(snapshot, dict):
+                    raise ValueError("Printer usage snapshot is not valid.")
+                if data.get("base_url"):
+                    set_setting("printer_base_url", normalize_printer_base_url(data.get("base_url")))
+                result = apply_printer_usage_snapshot(snapshot, reset=bool(data.get("reset")))
+                if data.get("enable"):
+                    set_setting("usage_monitor_enabled", "1")
                 self.send_json({**result, "monitor": usage_monitor_status(), **fetch_bootstrap()})
                 return
 

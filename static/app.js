@@ -72,6 +72,18 @@ const fields = {
 let barcodeStream = null;
 let barcodeDetector = null;
 let barcodeScanTimer = null;
+let usageTrackingTimer = null;
+
+const materialDensities = {
+  PLA: 1.24,
+  PETG: 1.27,
+  ABS: 1.04,
+  ASA: 1.07,
+  TPU: 1.2,
+  PC: 1.2,
+  NYLON: 1.14,
+  PA: 1.14,
+};
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -146,8 +158,13 @@ function renderPrinterStatus(message = null) {
     return;
   }
   if (state.settings.usage_monitor_enabled === "1") {
+    if (!usageTrackingTimer) schedulePageUsageTracking();
     els.printerStatus.textContent = "Tracking usage";
     return;
+  }
+  if (usageTrackingTimer) {
+    window.clearInterval(usageTrackingTimer);
+    usageTrackingTimer = null;
   }
   els.printerStatus.textContent = els.printerUrlInput.value ? "Ready" : "Not connected";
 }
@@ -370,6 +387,12 @@ function printerPayload() {
   return { base_url: els.printerUrlInput.value.trim() };
 }
 
+function printerBaseUrl() {
+  const value = els.printerUrlInput.value.trim();
+  if (!value) throw new Error("Printer address is required.");
+  return value.startsWith("http://") || value.startsWith("https://") ? value.replace(/\/+$/, "") : `http://${value}`;
+}
+
 function showPrinterOutput(message, detail = null) {
   els.printerOutput.hidden = false;
   els.printerOutput.textContent = detail
@@ -440,14 +463,141 @@ function usageSummary(result) {
   return `${result.message || "Usage tracking updated."}${fileLine}${progressLine}${allocationLine}`;
 }
 
+function cleanNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function densityForMaterial(material) {
+  const text = String(material || "").toUpperCase();
+  const match = Object.entries(materialDensities).find(([key]) => text.includes(key));
+  return match ? match[1] : 1.24;
+}
+
+function filamentMmToGrams(lengthMm, material, diameterMm = 1.75) {
+  const areaMm2 = Math.PI * (diameterMm / 2) ** 2;
+  const volumeCm3 = (Math.max(0, lengthMm) * areaMm2) / 1000;
+  return volumeCm3 * densityForMaterial(material);
+}
+
+function normalizeColor(value) {
+  const text = String(value || "").trim();
+  if (/^[0-9a-fA-F]{6}$/.test(text)) return `#${text}`;
+  if (/^#[0-9a-fA-F]{6}$/.test(text)) return text;
+  if (/^#[0-9a-fA-F]{8}$/.test(text)) return `#${text.slice(-6)}`;
+  return "";
+}
+
+async function printerJson(path) {
+  const response = await fetch(`${printerBaseUrl()}${path}`, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`Printer answered with ${response.status}`);
+  const data = await response.json();
+  return data.result || data;
+}
+
+async function fetchPrinterStatus() {
+  try {
+    const payload = await printerJson("/printer/objects/query?print_stats&virtual_sdcard");
+    const status = payload.status || payload;
+    if (status.print_stats || status.virtual_sdcard) return status;
+  } catch (error) {
+    // Some printer builds do not accept combined object queries.
+  }
+  const [printStatsPayload, sdcardPayload] = await Promise.all([
+    printerJson("/printer/objects/query?print_stats"),
+    printerJson("/printer/objects/query?virtual_sdcard"),
+  ]);
+  return {
+    print_stats: (printStatsPayload.status || printStatsPayload).print_stats || {},
+    virtual_sdcard: (sdcardPayload.status || sdcardPayload).virtual_sdcard || {},
+  };
+}
+
+async function fetchPrinterUsageSnapshotFromPage() {
+  const status = await fetchPrinterStatus();
+  const printStats = status.print_stats || {};
+  const sdcard = status.virtual_sdcard || {};
+  const currentPrint = sdcard.cur_print_data || {};
+  const metadata = currentPrint.metadata || {};
+  const modelInfo = metadata.model_info || {};
+  const filename =
+    printStats.filename ||
+    currentPrint.filename ||
+    String(sdcard.file_path || "").split("/").pop() ||
+    "";
+  const state = printStats.state || currentPrint.status || "";
+  const startTime = currentPrint.start_time || metadata.uuid || "";
+  const material = String(metadata.filament_type || modelInfo.MaterialType || printStats.filament_type || "").toUpperCase();
+  const progress = Math.max(0, Math.min(cleanNumber(sdcard.progress, 0), 1));
+  const plannedGrams = Array.isArray(metadata.filament_used_g)
+    ? metadata.filament_used_g.map((item) => Math.max(0, cleanNumber(item, 0)))
+    : [];
+  const plannedTotalGrams = plannedGrams.reduce((sum, item) => sum + item, 0);
+  const filamentUsedMm = cleanNumber(printStats.filament_used || currentPrint.filament_used, 0);
+  const usedGrams =
+    plannedTotalGrams > 0 && progress > 0
+      ? plannedTotalGrams * progress
+      : filamentMmToGrams(filamentUsedMm, material || "PLA");
+  const colors = Array.isArray(metadata.default_filament_colour) ? metadata.default_filament_colour : [];
+  let parts = plannedGrams
+    .map((grams, index) => ({
+      index,
+      planned_g: grams,
+      material,
+      color_hex: normalizeColor(colors[index]),
+    }))
+    .filter((part) => part.planned_g > 0);
+  if (!parts.length) {
+    parts = [{ index: 0, planned_g: Math.max(plannedTotalGrams, 1), material, color_hex: "" }];
+  }
+  return {
+    filename,
+    signature: filename ? `${filename}|${startTime}` : "",
+    state,
+    progress,
+    material,
+    planned_total_g: plannedTotalGrams,
+    used_grams: Math.max(0, usedGrams),
+    filament_used_mm: filamentUsedMm,
+    basis: plannedTotalGrams > 0 && progress > 0 ? "browser slicer progress" : "browser extrusion length",
+    parts,
+  };
+}
+
+async function applyPrinterUsageSnapshot({ reset = false, enable = false } = {}) {
+  const snapshot = await fetchPrinterUsageSnapshotFromPage();
+  const result = await api("/api/printer/usage/snapshot", {
+    method: "POST",
+    body: JSON.stringify({
+      base_url: printerBaseUrl(),
+      snapshot,
+      reset,
+      enable,
+    }),
+  });
+  applyBootstrapPayload(result);
+  return result;
+}
+
+function schedulePageUsageTracking() {
+  window.clearInterval(usageTrackingTimer);
+  usageTrackingTimer = window.setInterval(async () => {
+    try {
+      const result = await applyPrinterUsageSnapshot();
+      if (result.deducted) {
+        showPrinterOutput(usageSummary(result));
+        render();
+      }
+    } catch (error) {
+      showPrinterOutput(`Usage tracking paused: ${error.message}`);
+    }
+  }, 30000);
+}
+
 async function checkPrinterUsage(reset = false) {
   renderPrinterStatus(reset ? "Setting baseline..." : "Checking usage...");
   try {
-    const result = await api("/api/printer/usage/check", {
-      method: "POST",
-      body: JSON.stringify({ ...printerPayload(), reset }),
-    });
-    applyBootstrapPayload(result);
+    const result = await applyPrinterUsageSnapshot({ reset });
     renderPrinterStatus();
     showPrinterOutput(usageSummary(result));
     render();
@@ -460,13 +610,10 @@ async function checkPrinterUsage(reset = false) {
 async function startUsageTracking() {
   renderPrinterStatus("Starting tracking...");
   try {
-    const result = await api("/api/printer/usage/start", {
-      method: "POST",
-      body: JSON.stringify(printerPayload()),
-    });
-    applyBootstrapPayload(result);
+    const result = await applyPrinterUsageSnapshot({ reset: true, enable: true });
+    schedulePageUsageTracking();
     renderPrinterStatus();
-    showPrinterOutput(`${usageSummary(result)}\nUsage tracking is now on.`);
+    showPrinterOutput(`${usageSummary(result)}\nUsage tracking is now on while this page is open.`);
     render();
   } catch (error) {
     renderPrinterStatus("Tracking failed");
@@ -482,6 +629,8 @@ async function stopUsageTracking() {
       body: JSON.stringify({}),
     });
     applyBootstrapPayload(result);
+    window.clearInterval(usageTrackingTimer);
+    usageTrackingTimer = null;
     renderPrinterStatus();
     showPrinterOutput("Usage tracking stopped.");
     render();
