@@ -1,0 +1,1186 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import sqlite3
+import csv
+import io
+from datetime import datetime, timezone
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.error import URLError
+from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
+
+
+ROOT = Path(__file__).resolve().parent
+STATIC_ROOT = ROOT / "static"
+DB_PATH = ROOT / "filament_inventory.sqlite3"
+
+STARTER_CATALOG = [
+    ("Bambu Lab", "PLA", "Basic Black", "#000000"),
+    ("Bambu Lab", "PLA", "Basic White", "#ffffff"),
+    ("Bambu Lab", "PLA", "Basic Red", "#c12e1f"),
+    ("Bambu Lab", "PLA", "Basic Blue", "#1f5fba"),
+    ("Bambu Lab", "PLA", "Basic Green", "#2f8a47"),
+    ("Bambu Lab", "PETG", "Basic Black", "#111111"),
+    ("Bambu Lab", "PETG HF", "Black", "#111111"),
+    ("Bambu Lab", "PETG HF", "White", "#ffffff"),
+    ("Creality", "PLA", "Hyper PLA Black", "#111111"),
+    ("Creality", "PLA", "Hyper PLA White", "#ffffff"),
+    ("Creality", "PETG", "PETG Black", "#111111"),
+    ("Creality", "PETG", "PETG Transparent Red", "#ff1e1e"),
+    ("eSUN", "PLA+", "Black", "#111111"),
+    ("eSUN", "PLA+", "White", "#f7f7ef"),
+    ("eSUN", "PLA+", "Fire Engine Red", "#c8102e"),
+    ("eSUN", "PETG", "Solid Black", "#111111"),
+    ("Hatchbox", "PLA", "Black", "#111111"),
+    ("Hatchbox", "PLA", "White", "#f7f7f3"),
+    ("Inland", "PLA+", "Black", "#111111"),
+    ("Inland", "PETG", "Red", "#c22026"),
+    ("Overture", "PLA", "Black", "#111111"),
+    ("Overture", "PETG", "Space Gray", "#777b80"),
+    ("Polymaker", "PLA", "PolyTerra Cotton White", "#f5f1e6"),
+    ("Polymaker", "PLA", "PolyTerra Charcoal Black", "#1b1b1b"),
+    ("Polymaker", "PLA", "PolyTerra Army Green", "#4f5b3a"),
+    ("Polymaker", "PETG", "PolyLite Black", "#111111"),
+    ("Prusament", "PLA", "Galaxy Black", "#111111"),
+    ("Prusament", "PETG", "Prusa Orange", "#ff6a13"),
+    ("SUNLU", "PLA", "Black", "#111111"),
+    ("SUNLU", "PETG", "White", "#f4f4f0"),
+]
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def connect() -> sqlite3.Connection:
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+def init_db() -> None:
+    with connect() as con:
+        con.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                kind TEXT NOT NULL CHECK (kind IN ('cfs', 'dryer', 'storage', 'retired')),
+                sort_order INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS spools (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                barcode TEXT,
+                material TEXT NOT NULL,
+                brand TEXT NOT NULL,
+                color_name TEXT NOT NULL,
+                color_hex TEXT NOT NULL DEFAULT '#888888',
+                diameter TEXT NOT NULL DEFAULT '1.75mm',
+                original_weight_g INTEGER NOT NULL DEFAULT 1000,
+                remaining_weight_g INTEGER NOT NULL DEFAULT 1000,
+                status TEXT NOT NULL CHECK (status IN ('sealed', 'open', 'loaded', 'retired')),
+                location_id INTEGER REFERENCES locations(id) ON DELETE SET NULL,
+                cfs_slot_name TEXT,
+                purchased_at TEXT,
+                opened_at TEXT,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS usage_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                spool_id INTEGER NOT NULL REFERENCES spools(id) ON DELETE CASCADE,
+                grams_used INTEGER NOT NULL,
+                project TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS filament_catalog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL DEFAULT '3dfilamentprofiles',
+                source_id TEXT,
+                barcode TEXT,
+                brand TEXT NOT NULL,
+                material TEXT NOT NULL,
+                color_name TEXT NOT NULL,
+                color_hex TEXT NOT NULL DEFAULT '#888888',
+                raw_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_filament_catalog_brand
+            ON filament_catalog (brand);
+
+            CREATE INDEX IF NOT EXISTS idx_filament_catalog_material
+            ON filament_catalog (material);
+
+            CREATE INDEX IF NOT EXISTS idx_filament_catalog_color
+            ON filament_catalog (color_name);
+
+            """
+        )
+
+        defaults = [
+            ("CFS Slot 1", "cfs", 10),
+            ("CFS Slot 2", "cfs", 20),
+            ("CFS Slot 3", "cfs", 30),
+            ("CFS Slot 4", "cfs", 40),
+            ("Dehumidifier", "dryer", 50),
+            ("Open Storage", "storage", 60),
+            ("Sealed Stock", "storage", 70),
+            ("Retired / Empty", "retired", 80),
+        ]
+        con.executemany(
+            "INSERT OR IGNORE INTO locations (name, kind, sort_order) VALUES (?, ?, ?)",
+            defaults,
+        )
+        columns = {
+            row["name"]
+            for row in con.execute("PRAGMA table_info(spools)").fetchall()
+        }
+        if "cfs_slot_name" not in columns:
+            con.execute("ALTER TABLE spools ADD COLUMN cfs_slot_name TEXT")
+        if "barcode" not in columns:
+            con.execute("ALTER TABLE spools ADD COLUMN barcode TEXT")
+
+        catalog_columns = {
+            row["name"]
+            for row in con.execute("PRAGMA table_info(filament_catalog)").fetchall()
+        }
+        if "barcode" not in catalog_columns:
+            con.execute("ALTER TABLE filament_catalog ADD COLUMN barcode TEXT")
+
+        con.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_filament_catalog_barcode
+            ON filament_catalog (barcode);
+
+            CREATE INDEX IF NOT EXISTS idx_spools_barcode
+            ON spools (barcode);
+            """
+        )
+
+
+def row_to_dict(row: sqlite3.Row) -> dict:
+    return {key: row[key] for key in row.keys()}
+
+
+def fetch_bootstrap() -> dict:
+    with connect() as con:
+        locations = [
+            row_to_dict(row)
+            for row in con.execute(
+                "SELECT * FROM locations ORDER BY sort_order, name"
+            ).fetchall()
+        ]
+        spools = [
+            row_to_dict(row)
+            for row in con.execute(
+                """
+                SELECT
+                    s.*,
+                    l.name AS location_name,
+                    l.kind AS location_kind
+                FROM spools s
+                LEFT JOIN locations l ON l.id = s.location_id
+                ORDER BY
+                    CASE s.status
+                        WHEN 'loaded' THEN 1
+                        WHEN 'open' THEN 2
+                        WHEN 'sealed' THEN 3
+                        ELSE 4
+                    END,
+                    l.sort_order,
+                    s.material,
+                    s.brand,
+                    s.color_name
+                """
+            ).fetchall()
+        ]
+        usage = [
+            row_to_dict(row)
+            for row in con.execute(
+                """
+                SELECT u.*, s.material, s.brand, s.color_name, s.color_hex
+                FROM usage_events u
+                JOIN spools s ON s.id = u.spool_id
+                ORDER BY u.created_at DESC, u.id DESC
+                LIMIT 50
+                """
+            ).fetchall()
+        ]
+        settings = {
+            row["key"]: row["value"]
+            for row in con.execute("SELECT key, value FROM settings").fetchall()
+        }
+        catalog_count = con.execute("SELECT COUNT(*) AS count FROM filament_catalog").fetchone()[
+            "count"
+        ]
+    return {
+        "locations": locations,
+        "spools": spools,
+        "usage": usage,
+        "settings": settings,
+        "catalog_count": catalog_count,
+    }
+
+
+def search_catalog(
+    query: str = "",
+    limit: int = 40,
+    brand: str = "",
+    material: str = "",
+    color: str = "",
+    barcode: str = "",
+) -> dict:
+    query = clean_text(query)
+    brand = clean_text(brand)
+    material = clean_text(material)
+    color = clean_text(color)
+    barcode = clean_barcode(barcode)
+    limit = min(max(clean_int(limit, 40, 1), 1), 80)
+    with connect() as con:
+        total = con.execute("SELECT COUNT(*) AS count FROM filament_catalog").fetchone()[
+            "count"
+        ]
+        if barcode:
+            rows = con.execute(
+                """
+                SELECT id, source_id, barcode, brand, material, color_name, color_hex
+                FROM filament_catalog
+                WHERE barcode = ?
+                ORDER BY brand, material, color_name
+                LIMIT ?
+                """,
+                (barcode, limit),
+            ).fetchall()
+        elif not any((query, brand, material, color)):
+            rows = con.execute(
+                """
+                SELECT id, source_id, barcode, brand, material, color_name, color_hex
+                FROM filament_catalog
+                ORDER BY brand, material, color_name
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        else:
+            clauses = []
+            params = []
+            if query:
+                for term in query.lower().split():
+                    if term:
+                        clauses.append(
+                            "(LOWER(brand || ' ' || material || ' ' || color_name || ' ' || color_hex) LIKE ?)"
+                        )
+                        params.append(f"%{term}%")
+            if brand:
+                clauses.append("LOWER(brand) LIKE LOWER(?)")
+                params.append(f"%{brand}%")
+            if material:
+                clauses.append("LOWER(material) LIKE LOWER(?)")
+                params.append(f"%{material}%")
+            if color:
+                clauses.append("(LOWER(color_name) LIKE LOWER(?) OR LOWER(color_hex) LIKE LOWER(?))")
+                params.extend([f"%{color}%", f"%{color}%"])
+            where = " AND ".join(clauses)
+            rows = con.execute(
+                f"""
+                SELECT id, source_id, barcode, brand, material, color_name, color_hex
+                FROM filament_catalog
+                WHERE {where}
+                ORDER BY
+                  CASE
+                    WHEN LOWER(brand) = LOWER(?) THEN 0
+                    WHEN LOWER(brand) LIKE LOWER(?) THEN 1
+                    ELSE 2
+                  END,
+                  CASE
+                    WHEN LOWER(material) = LOWER(?) THEN 0
+                    WHEN LOWER(material) LIKE LOWER(?) THEN 1
+                    ELSE 2
+                  END,
+                  brand, material, color_name
+                LIMIT ?
+                """,
+                (
+                    *params,
+                    brand or query,
+                    f"{brand or query}%",
+                    material or query,
+                    f"{material or query}%",
+                    limit,
+                ),
+            ).fetchall()
+    return {
+        "total": total,
+        "results": [row_to_dict(row) for row in rows],
+    }
+
+
+def clean_int(value, fallback: int, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def clean_text(value, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    return str(value).strip()
+
+
+def clean_barcode(value) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    return "".join(ch for ch in text if ch.isalnum() or ch in "-_.")[:128]
+
+
+def first_catalog_value(row: dict, names: tuple[str, ...], fallback: str = "") -> str:
+    normalized = {clean_text(key).lower().replace(" ", "_"): value for key, value in row.items()}
+    for name in names:
+        value = normalized.get(name.lower().replace(" ", "_"))
+        if value not in (None, ""):
+            return clean_text(value)
+    return fallback
+
+
+def parse_catalog_import(data: dict) -> list[dict]:
+    text = clean_text(data.get("content"))
+    if not text:
+        return []
+
+    records = []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            for key in ("spools", "filaments", "data", "items", "results"):
+                if isinstance(parsed.get(key), list):
+                    parsed = parsed[key]
+                    break
+        if isinstance(parsed, list):
+            records = [item for item in parsed if isinstance(item, dict)]
+    except json.JSONDecodeError:
+        reader = csv.DictReader(io.StringIO(text))
+        records = [row for row in reader]
+
+    catalog = []
+    for row in records:
+        brand = first_catalog_value(row, ("brand", "vendor", "manufacturer", "maker"))
+        material = first_catalog_value(row, ("material", "type", "filament_type", "filament"))
+        color_name = first_catalog_value(
+            row, ("color", "color_name", "name", "colour", "filament_name")
+        )
+        color_hex = normalize_color(
+            first_catalog_value(row, ("hex", "hex_color", "color_hex", "colour_hex"), "#888888")
+        )
+        source_id = first_catalog_value(row, ("id", "filament_id", "profile_id", "source_id"))
+        barcode = clean_barcode(
+            first_catalog_value(row, ("barcode", "upc", "ean", "gtin", "gtin13", "gtin_13"))
+        )
+        if not brand or not material or not color_name:
+            continue
+        catalog.append(
+            {
+                "source_id": source_id or None,
+                "barcode": barcode or None,
+                "brand": brand,
+                "material": material.upper(),
+                "color_name": color_name,
+                "color_hex": color_hex,
+                "raw_json": json.dumps(row),
+            }
+        )
+    return catalog
+
+
+def import_catalog(records: list[dict]) -> int:
+    touched = 0
+    with connect() as con:
+        for record in records:
+            existing = con.execute(
+                """
+                SELECT id FROM filament_catalog
+                WHERE LOWER(brand) = LOWER(?)
+                  AND UPPER(material) = UPPER(?)
+                  AND LOWER(color_name) = LOWER(?)
+                LIMIT 1
+                """,
+                (record["brand"], record["material"], record["color_name"]),
+            ).fetchone()
+            if existing:
+                con.execute(
+                    """
+                    UPDATE filament_catalog
+                    SET source_id = COALESCE(?, source_id), barcode = COALESCE(?, barcode), color_hex = ?,
+                        raw_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        record["source_id"],
+                        record["barcode"],
+                        record["color_hex"],
+                        record["raw_json"],
+                        now_iso(),
+                        existing["id"],
+                    ),
+                )
+            else:
+                timestamp = now_iso()
+                con.execute(
+                    """
+                    INSERT INTO filament_catalog (
+                        source_id, barcode, brand, material, color_name, color_hex,
+                        raw_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record["source_id"],
+                        record["barcode"],
+                        record["brand"],
+                        record["material"],
+                        record["color_name"],
+                        record["color_hex"],
+                        record["raw_json"],
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+            touched += 1
+    return touched
+
+
+def seed_starter_catalog() -> int:
+    records = [
+        {
+            "source_id": None,
+            "barcode": None,
+            "brand": brand,
+            "material": material.upper(),
+            "color_name": color_name,
+            "color_hex": color_hex,
+            "raw_json": json.dumps(
+                {
+                    "source": "starter catalog",
+                    "brand": brand,
+                    "material": material,
+                    "color_name": color_name,
+                    "color_hex": color_hex,
+                }
+            ),
+        }
+        for brand, material, color_name, color_hex in STARTER_CATALOG
+    ]
+    return import_catalog(records)
+
+
+def normalize_spool_payload(data: dict, existing: dict | None = None) -> dict:
+    base = existing or {}
+    original = clean_int(
+        data.get("original_weight_g", base.get("original_weight_g", 1000)), 1000
+    )
+    remaining = clean_int(
+        data.get("remaining_weight_g", base.get("remaining_weight_g", original)),
+        original,
+    )
+    location_id = data.get("location_id", base.get("location_id"))
+    if location_id in ("", None):
+        location_id = None
+    else:
+        location_id = clean_int(location_id, 0)
+
+    status = clean_text(data.get("status", base.get("status", "sealed")), "sealed")
+    if status not in {"sealed", "open", "loaded", "retired"}:
+        status = "sealed"
+
+    opened_at = clean_text(data.get("opened_at", base.get("opened_at") or ""))
+    if status in {"open", "loaded"} and not opened_at:
+        opened_at = datetime.now().date().isoformat()
+
+    return {
+        "barcode": clean_barcode(data.get("barcode", base.get("barcode", ""))) or None,
+        "material": clean_text(data.get("material", base.get("material", ""))).upper(),
+        "brand": clean_text(data.get("brand", base.get("brand", ""))),
+        "color_name": clean_text(data.get("color_name", base.get("color_name", ""))),
+        "color_hex": clean_text(data.get("color_hex", base.get("color_hex", "#888888")), "#888888"),
+        "diameter": clean_text(data.get("diameter", base.get("diameter", "1.75mm")), "1.75mm"),
+        "original_weight_g": original,
+        "remaining_weight_g": min(remaining, original),
+        "status": status,
+        "location_id": location_id,
+        "purchased_at": clean_text(data.get("purchased_at", base.get("purchased_at") or "")) or None,
+        "opened_at": opened_at or None,
+        "notes": clean_text(data.get("notes", base.get("notes", ""))),
+    }
+
+
+def lookup_barcode(barcode: str) -> dict:
+    barcode = clean_barcode(barcode)
+    if not barcode:
+        raise ValueError("Barcode is required.")
+    with connect() as con:
+        spools = [
+            row_to_dict(row)
+            for row in con.execute(
+                """
+                SELECT
+                    s.*,
+                    l.name AS location_name,
+                    l.kind AS location_kind
+                FROM spools s
+                LEFT JOIN locations l ON l.id = s.location_id
+                WHERE s.barcode = ?
+                ORDER BY
+                    CASE s.status
+                        WHEN 'loaded' THEN 1
+                        WHEN 'open' THEN 2
+                        WHEN 'sealed' THEN 3
+                        ELSE 4
+                    END,
+                    s.updated_at DESC
+                LIMIT 10
+                """,
+                (barcode,),
+            ).fetchall()
+        ]
+    catalog = search_catalog(barcode=barcode, limit=20)
+    return {
+        "barcode": barcode,
+        "spools": spools,
+        "catalog": catalog["results"],
+        "total_catalog": catalog["total"],
+    }
+
+
+def normalize_printer_base_url(value: str) -> str:
+    url = clean_text(value)
+    if not url:
+        raise ValueError("Printer address is required.")
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    parsed = urlparse(url)
+    if not parsed.netloc:
+        raise ValueError("Printer address is not valid.")
+    return url.rstrip("/")
+
+
+def printer_get(base_url: str, path: str) -> dict:
+    request = Request(
+        base_url + path,
+        headers={"Accept": "application/json", "User-Agent": "FilamentInventory/1.0"},
+    )
+    try:
+        with urlopen(request, timeout=4) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except URLError as exc:
+        raise ValueError(f"Could not reach printer: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise ValueError("Could not reach printer before the request timed out.") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError("Printer answered, but not with JSON data.") from exc
+
+
+def moonraker_result(payload: dict):
+    return payload.get("result", payload)
+
+
+def discover_printer(base_url: str) -> dict:
+    info = {}
+    objects = []
+    try:
+        info = moonraker_result(printer_get(base_url, "/printer/info"))
+    except ValueError:
+        info = {}
+
+    listed = moonraker_result(printer_get(base_url, "/printer/objects/list"))
+    objects = listed.get("objects", listed if isinstance(listed, list) else [])
+    cfs_candidates = [
+        obj
+        for obj in objects
+        if any(token in obj.lower() for token in ("box", "cfs", "ams", "filament"))
+    ]
+    return {
+        "base_url": base_url,
+        "printer": info,
+        "object_count": len(objects),
+        "cfs_candidates": cfs_candidates,
+    }
+
+
+def extract_slots(value) -> list:
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, dict):
+        return []
+    if any(key in value for key in ("T1", "T2", "T3", "T4")):
+        material_lookup = {}
+        for item in value.get("same_material", []):
+            if isinstance(item, list) and len(item) >= 4:
+                code = str(item[0])
+                color = str(item[1])
+                material = str(item[3])
+                for slot_name in item[2] if isinstance(item[2], list) else []:
+                    material_lookup[str(slot_name)] = {
+                        "material": material,
+                        "color_hex": normalize_color(color),
+                    }
+                material_lookup[code] = {"material": material, "color_hex": normalize_color(color)}
+
+        slots = []
+        for tray_index in range(1, 5):
+            tray_name = f"T{tray_index}"
+            tray = value.get(tray_name)
+            if not isinstance(tray, dict) or tray.get("state") != "connect":
+                continue
+            colors = tray.get("color_value", [])
+            materials = tray.get("material_type", [])
+            remaining = tray.get("remain_len", [])
+            vendors = tray.get("vender", [])
+            for slot_index, letter in enumerate(("A", "B", "C", "D")):
+                slot_name = f"{tray_name}{letter}"
+                color = colors[slot_index] if slot_index < len(colors) else "-1"
+                material_code = materials[slot_index] if slot_index < len(materials) else "-1"
+                remain = remaining[slot_index] if slot_index < len(remaining) else "100"
+                vendor = vendors[slot_index] if slot_index < len(vendors) else ""
+                if str(color) == "-1" or str(material_code) == "-1":
+                    continue
+                mapped = material_lookup.get(slot_name) or material_lookup.get(str(material_code)) or {}
+                material = mapped.get("material") or str(material_code)
+                percent = clean_int(remain, 100, 0)
+                slots.append(
+                    {
+                        "slot_name": slot_name,
+                        "slot_index": ((tray_index - 1) * 4) + slot_index,
+                        "brand": "Creality RFID" if vendor and vendor != "unknown" else "CFS",
+                        "material": material,
+                        "color_name": f"{slot_name} {material}",
+                        "color_hex": normalize_color(mapped.get("color_hex") or color),
+                        "remaining_weight_g": min(1000, percent * 10),
+                        "original_weight_g": 1000,
+                        "occupied": True,
+                        "temperature": tray.get("temperature"),
+                        "humidity": tray.get("dry_and_humidity"),
+                    }
+                )
+        return slots
+    for key in (
+        "slots",
+        "slot",
+        "filaments",
+        "materials",
+        "box_info",
+        "boxInfo",
+        "cfs",
+        "boxes",
+    ):
+        nested = value.get(key)
+        slots = extract_slots(nested)
+        if slots:
+            return slots
+    numeric_items = [
+        (key, item)
+        for key, item in value.items()
+        if str(key).isdigit() and isinstance(item, dict)
+    ]
+    if numeric_items:
+        return [item for _, item in sorted(numeric_items, key=lambda pair: int(pair[0]))]
+    return []
+
+
+def first_present(data: dict, keys: tuple[str, ...], fallback=None):
+    for key in keys:
+        if key in data and data[key] not in (None, ""):
+            return data[key]
+    return fallback
+
+
+def normalize_color(value) -> str:
+    if isinstance(value, str):
+        color = value.strip()
+        if len(color) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in color):
+            return "#" + color
+        if len(color) == 7 and all(ch in "0123456789abcdefABCDEF" for ch in color):
+            return "#" + color[-6:]
+        if len(color) == 7 and color.startswith("#"):
+            return color
+        if len(color) == 8 and color.startswith("#"):
+            return "#" + color[-6:]
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        return "#{:02x}{:02x}{:02x}".format(
+            clean_int(value[0], 128, 0),
+            clean_int(value[1], 128, 0),
+            clean_int(value[2], 128, 0),
+        )
+    return "#888888"
+
+
+def same_filament(left: sqlite3.Row | dict, right: dict) -> bool:
+    return (
+        clean_text(left["material"]).upper() == clean_text(right["material"]).upper()
+        and clean_text(left["color_hex"]).lower() == clean_text(right["color_hex"]).lower()
+    )
+
+
+def normalize_slot(slot: dict, index: int) -> dict | None:
+    if not isinstance(slot, dict):
+        return None
+    occupied = first_present(
+        slot,
+        ("occupied", "has_filament", "hasFilament", "is_exist", "material_exist", "empty"),
+    )
+    if occupied is False or occupied == 0 or occupied == "0":
+        return None
+    if occupied is True:
+        pass
+    elif str(occupied).lower() in {"false", "empty", "none"}:
+        return None
+
+    material = clean_text(
+        first_present(slot, ("material", "type", "filament_type", "filamentType", "name"), "PLA")
+    ).upper()
+    brand = clean_text(first_present(slot, ("brand", "vendor", "manufacturer"), "CFS"))
+    color_name = clean_text(
+        first_present(slot, ("color_name", "colorName", "filament_name", "filamentName"), "")
+    )
+    color_hex = normalize_color(first_present(slot, ("color", "color_hex", "colorHex", "rgb")))
+    if not color_name:
+        color_name = f"Slot {index + 1}"
+    weight = clean_int(
+        first_present(
+            slot,
+            ("remain", "remaining", "remaining_weight", "remainingWeight", "weight", "tray_weight"),
+            1000,
+        ),
+        1000,
+    )
+    if weight <= 100:
+        weight = 1000
+    return {
+        "material": material or "PLA",
+        "brand": brand or "CFS",
+        "color_name": color_name,
+        "color_hex": color_hex,
+        "original_weight_g": 1000,
+        "remaining_weight_g": min(weight, 1000),
+        "diameter": "1.75mm",
+        "status": "loaded",
+        "slot_index": clean_int(slot.get("slot_index"), index),
+        "raw": slot,
+    }
+
+
+def fetch_cfs_slots(base_url: str) -> tuple[list[dict], dict]:
+    candidates = ["box", "cfs", "filament_box", "filament"]
+    last_payload = {}
+    for candidate in candidates:
+        payload = moonraker_result(
+            printer_get(base_url, f"/printer/objects/query?{candidate}")
+        )
+        last_payload = payload
+        status = payload.get("status", payload)
+        data = status.get(candidate, status) if isinstance(status, dict) else status
+        slots = [slot for slot in extract_slots(data)]
+        normalized = []
+        for index, slot in enumerate(slots):
+            normalized_slot = normalize_slot(slot, index)
+            if normalized_slot:
+                normalized.append(normalized_slot)
+        if normalized:
+            return normalized, {"object": candidate, "raw": data}
+    return [], {"object": None, "raw": last_payload}
+
+
+def upsert_synced_slots(slots: list[dict]) -> int:
+    with connect() as con:
+        cfs_locations = con.execute(
+            "SELECT * FROM locations WHERE kind = 'cfs' ORDER BY sort_order, name"
+        ).fetchall()
+        open_storage = con.execute(
+            "SELECT id FROM locations WHERE name = 'Open Storage' LIMIT 1"
+        ).fetchone()
+        open_storage_id = open_storage["id"] if open_storage else None
+        seen_location_ids = set()
+        touched = 0
+        for slot in slots:
+            if slot["slot_index"] >= len(cfs_locations):
+                continue
+            location_id = cfs_locations[slot["slot_index"]]["id"]
+            seen_location_ids.add(location_id)
+            note = "Synced from printer CFS."
+            currently_loaded = con.execute(
+                """
+                SELECT * FROM spools
+                WHERE location_id = ? AND status = 'loaded'
+                LIMIT 1
+                """,
+                (location_id,),
+            ).fetchone()
+            payload = normalize_spool_payload({**slot, "location_id": location_id, "notes": note})
+
+            if currently_loaded and not same_filament(currently_loaded, payload):
+                con.execute(
+                    """
+                    UPDATE spools
+                    SET status = 'open', location_id = ?, cfs_slot_name = NULL, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (open_storage_id, now_iso(), currently_loaded["id"]),
+                )
+                currently_loaded = None
+
+            existing = currently_loaded
+            if not existing:
+                existing = con.execute(
+                    """
+                    SELECT * FROM spools
+                    WHERE status IN ('sealed', 'open')
+                      AND UPPER(material) = UPPER(?)
+                      AND LOWER(color_hex) = LOWER(?)
+                    ORDER BY
+                      CASE status WHEN 'open' THEN 1 ELSE 2 END,
+                      id
+                    LIMIT 1
+                    """,
+                    (payload["material"], payload["color_hex"]),
+                ).fetchone()
+
+            if existing:
+                con.execute(
+                    """
+                    UPDATE spools
+                    SET material = ?, brand = ?, color_name = ?, color_hex = ?,
+                        diameter = ?, original_weight_g = ?, remaining_weight_g = ?,
+                        status = 'loaded', location_id = ?, cfs_slot_name = ?,
+                        notes = ?, opened_at = COALESCE(opened_at, ?), updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        payload["material"],
+                        payload["brand"],
+                        payload["color_name"],
+                        payload["color_hex"],
+                        payload["diameter"],
+                        payload["original_weight_g"],
+                        payload["remaining_weight_g"],
+                        location_id,
+                        slot.get("raw", {}).get("slot_name") or f"Slot {slot['slot_index'] + 1}",
+                        payload["notes"],
+                        datetime.now().date().isoformat(),
+                        now_iso(),
+                        existing["id"],
+                    ),
+                )
+            else:
+                created = now_iso()
+                con.execute(
+                    """
+                    INSERT INTO spools (
+                        material, brand, color_name, color_hex, diameter,
+                        original_weight_g, remaining_weight_g, status, location_id,
+                        cfs_slot_name, opened_at, notes, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'loaded', ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        payload["material"],
+                        payload["brand"],
+                        payload["color_name"],
+                        payload["color_hex"],
+                        payload["diameter"],
+                        payload["original_weight_g"],
+                        payload["remaining_weight_g"],
+                        location_id,
+                        slot.get("raw", {}).get("slot_name") or f"Slot {slot['slot_index'] + 1}",
+                        datetime.now().date().isoformat(),
+                        payload["notes"],
+                        created,
+                        created,
+                    ),
+                )
+            touched += 1
+
+        if seen_location_ids:
+            placeholders = ",".join("?" for _ in seen_location_ids)
+            con.execute(
+                f"""
+                UPDATE spools
+                SET status = 'open', location_id = ?, cfs_slot_name = NULL, updated_at = ?
+                WHERE status = 'loaded'
+                  AND location_id IN (
+                    SELECT id FROM locations WHERE kind = 'cfs'
+                  )
+                  AND location_id NOT IN ({placeholders})
+                """,
+                (open_storage_id, now_iso(), *seen_location_ids),
+            )
+    return touched
+
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(STATIC_ROOT), **kwargs)
+
+    def log_message(self, format: str, *args) -> None:
+        return
+
+    def send_json(self, payload: dict, status: int = 200) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def read_json(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length == 0:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/bootstrap":
+            self.send_json(fetch_bootstrap())
+            return
+        if parsed.path == "/api/catalog/search":
+            params = parse_qs(parsed.query)
+            query = params.get("q", [""])[0]
+            limit = params.get("limit", ["40"])[0]
+            brand = params.get("brand", [""])[0]
+            material = params.get("material", [""])[0]
+            color = params.get("color", [""])[0]
+            barcode = params.get("barcode", [""])[0]
+            self.send_json(
+                search_catalog(
+                    query=query,
+                    limit=clean_int(limit, 40, 1),
+                    brand=brand,
+                    material=material,
+                    color=color,
+                    barcode=barcode,
+                )
+            )
+            return
+        if parsed.path == "/api/barcode/lookup":
+            params = parse_qs(parsed.query)
+            self.send_json(lookup_barcode(params.get("code", [""])[0]))
+            return
+        if parsed.path == "/":
+            self.path = "/index.html"
+        return super().do_GET()
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path == "/api/printer/probe":
+                data = self.read_json()
+                base_url = normalize_printer_base_url(data.get("base_url", ""))
+                with connect() as con:
+                    con.execute(
+                        """
+                        INSERT OR REPLACE INTO settings (key, value)
+                        VALUES ('printer_base_url', ?)
+                        """,
+                        (base_url,),
+                    )
+                self.send_json(discover_printer(base_url))
+                return
+
+            if parsed.path == "/api/printer/sync":
+                data = self.read_json()
+                base_url = normalize_printer_base_url(data.get("base_url", ""))
+                slots, source = fetch_cfs_slots(base_url)
+                if not slots:
+                    self.send_json(
+                        {
+                            "error": "Connected to the printer, but could not find populated CFS slot data.",
+                            "source": source,
+                        },
+                        422,
+                    )
+                    return
+                touched = upsert_synced_slots(slots)
+                self.send_json(
+                    {
+                        "synced": touched,
+                        "source": source["object"],
+                        "slots": slots,
+                        **fetch_bootstrap(),
+                    }
+                )
+                return
+
+            if parsed.path == "/api/catalog/import":
+                records = parse_catalog_import(self.read_json())
+                imported = import_catalog(records)
+                self.send_json({"imported": imported, **fetch_bootstrap()}, 201)
+                return
+
+            if parsed.path == "/api/catalog/starter":
+                imported = seed_starter_catalog()
+                self.send_json({"imported": imported, **fetch_bootstrap()}, 201)
+                return
+
+            if parsed.path == "/api/spools":
+                data = normalize_spool_payload(self.read_json())
+                required = ["material", "brand", "color_name"]
+                if any(not data[key] for key in required):
+                    self.send_json({"error": "Material, brand, and color are required."}, 400)
+                    return
+                created = now_iso()
+                with connect() as con:
+                    cur = con.execute(
+                        """
+                        INSERT INTO spools (
+                            barcode, material, brand, color_name, color_hex, diameter,
+                            original_weight_g, remaining_weight_g, status, location_id,
+                            purchased_at, opened_at, notes, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            data["barcode"],
+                            data["material"],
+                            data["brand"],
+                            data["color_name"],
+                            data["color_hex"],
+                            data["diameter"],
+                            data["original_weight_g"],
+                            data["remaining_weight_g"],
+                            data["status"],
+                            data["location_id"],
+                            data["purchased_at"],
+                            data["opened_at"],
+                            data["notes"],
+                            created,
+                            created,
+                        ),
+                    )
+                self.send_json({"id": cur.lastrowid, **fetch_bootstrap()}, 201)
+                return
+
+            if parsed.path.startswith("/api/spools/") and parsed.path.endswith("/usage"):
+                spool_id = int(parsed.path.split("/")[3])
+                data = self.read_json()
+                grams = clean_int(data.get("grams_used"), 0, 1)
+                project = clean_text(data.get("project"))
+                notes = clean_text(data.get("notes"))
+                with connect() as con:
+                    spool = con.execute(
+                        "SELECT * FROM spools WHERE id = ?", (spool_id,)
+                    ).fetchone()
+                    if not spool:
+                        self.send_json({"error": "Spool not found."}, 404)
+                        return
+                    remaining = max(0, spool["remaining_weight_g"] - grams)
+                    status = "retired" if remaining == 0 else spool["status"]
+                    con.execute(
+                        """
+                        UPDATE spools
+                        SET remaining_weight_g = ?, status = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (remaining, status, now_iso(), spool_id),
+                    )
+                    con.execute(
+                        """
+                        INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (spool_id, grams, project, notes, now_iso()),
+                    )
+                self.send_json(fetch_bootstrap(), 201)
+                return
+        except (json.JSONDecodeError, ValueError, sqlite3.Error) as exc:
+            self.send_json({"error": str(exc)}, 400)
+            return
+        self.send_json({"error": "Not found."}, 404)
+
+    def do_PUT(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path.startswith("/api/spools/"):
+                spool_id = int(parsed.path.split("/")[3])
+                with connect() as con:
+                    existing_row = con.execute(
+                        "SELECT * FROM spools WHERE id = ?", (spool_id,)
+                    ).fetchone()
+                    if not existing_row:
+                        self.send_json({"error": "Spool not found."}, 404)
+                        return
+                    data = normalize_spool_payload(
+                        self.read_json(), row_to_dict(existing_row)
+                    )
+                    if not data["material"] or not data["brand"] or not data["color_name"]:
+                        self.send_json({"error": "Material, brand, and color are required."}, 400)
+                        return
+                    con.execute(
+                        """
+                        UPDATE spools
+                        SET barcode = ?, material = ?, brand = ?, color_name = ?, color_hex = ?,
+                            diameter = ?, original_weight_g = ?, remaining_weight_g = ?,
+                            status = ?, location_id = ?, purchased_at = ?, opened_at = ?,
+                            notes = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            data["barcode"],
+                            data["material"],
+                            data["brand"],
+                            data["color_name"],
+                            data["color_hex"],
+                            data["diameter"],
+                            data["original_weight_g"],
+                            data["remaining_weight_g"],
+                            data["status"],
+                            data["location_id"],
+                            data["purchased_at"],
+                            data["opened_at"],
+                            data["notes"],
+                            now_iso(),
+                            spool_id,
+                        ),
+                    )
+                self.send_json(fetch_bootstrap())
+                return
+        except (json.JSONDecodeError, ValueError, sqlite3.Error) as exc:
+            self.send_json({"error": str(exc)}, 400)
+            return
+        self.send_json({"error": "Not found."}, 404)
+
+
+def main() -> None:
+    init_db()
+    server = None
+    port = 8765
+    for candidate in range(8765, 8776):
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", candidate), Handler)
+            port = candidate
+            break
+        except OSError:
+            continue
+    if server is None:
+        raise OSError("No available local preview port between 8765 and 8775.")
+    print(f"Filament tracker running at http://127.0.0.1:{port}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

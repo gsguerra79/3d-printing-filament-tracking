@@ -1,0 +1,732 @@
+const state = {
+  locations: [],
+  spools: [],
+  usage: [],
+  settings: {},
+  catalogCount: 0,
+  catalogResults: [],
+  pendingBarcode: "",
+  filters: {
+    search: "",
+    material: "",
+    location: "",
+    status: "",
+  },
+};
+
+const els = {
+  addSpoolButton: document.querySelector("#addSpoolButton"),
+  spoolDialog: document.querySelector("#spoolDialog"),
+  spoolForm: document.querySelector("#spoolForm"),
+  spoolDialogTitle: document.querySelector("#spoolDialogTitle"),
+  usageDialog: document.querySelector("#usageDialog"),
+  usageForm: document.querySelector("#usageForm"),
+  usageSpoolName: document.querySelector("#usageSpoolName"),
+  cfsGrid: document.querySelector("#cfsGrid"),
+  usageList: document.querySelector("#usageList"),
+  inventoryGrid: document.querySelector("#inventoryGrid"),
+  inventoryCount: document.querySelector("#inventoryCount"),
+  cfsCount: document.querySelector("#cfsCount"),
+  searchInput: document.querySelector("#searchInput"),
+  materialFilter: document.querySelector("#materialFilter"),
+  locationFilter: document.querySelector("#locationFilter"),
+  statusFilter: document.querySelector("#statusFilter"),
+  locationInput: document.querySelector("#locationInput"),
+  printerUrlInput: document.querySelector("#printerUrlInput"),
+  probePrinterButton: document.querySelector("#probePrinterButton"),
+  syncPrinterButton: document.querySelector("#syncPrinterButton"),
+  printerStatus: document.querySelector("#printerStatus"),
+  printerOutput: document.querySelector("#printerOutput"),
+  catalogResults: document.querySelector("#catalogResults"),
+  scanBarcodeButton: document.querySelector("#scanBarcodeButton"),
+  stopBarcodeButton: document.querySelector("#stopBarcodeButton"),
+  barcodeScanner: document.querySelector("#barcodeScanner"),
+  barcodeVideo: document.querySelector("#barcodeVideo"),
+  barcodeStatus: document.querySelector("#barcodeStatus"),
+};
+
+const fields = {
+  spoolId: document.querySelector("#spoolId"),
+  barcode: document.querySelector("#barcodeInput"),
+  material: document.querySelector("#materialInput"),
+  brand: document.querySelector("#brandInput"),
+  colorName: document.querySelector("#colorNameInput"),
+  colorHex: document.querySelector("#colorHexInput"),
+  status: document.querySelector("#statusInput"),
+  location: document.querySelector("#locationInput"),
+  originalWeight: document.querySelector("#originalWeightInput"),
+  remainingWeight: document.querySelector("#remainingWeightInput"),
+  diameter: document.querySelector("#diameterInput"),
+  purchasedAt: document.querySelector("#purchasedAtInput"),
+  openedAt: document.querySelector("#openedAtInput"),
+  notes: document.querySelector("#notesInput"),
+  usageSpoolId: document.querySelector("#usageSpoolId"),
+  gramsUsed: document.querySelector("#gramsUsedInput"),
+  project: document.querySelector("#projectInput"),
+  usageNotes: document.querySelector("#usageNotesInput"),
+};
+
+let barcodeStream = null;
+let barcodeDetector = null;
+let barcodeScanTimer = null;
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Request failed.");
+  }
+  return data;
+}
+
+async function refresh() {
+  const data = await api("/api/bootstrap");
+  state.locations = data.locations;
+  state.spools = data.spools;
+  state.usage = data.usage;
+  state.settings = data.settings || {};
+  state.catalogCount = data.catalog_count || 0;
+  if (!els.printerUrlInput.value && state.settings.printer_base_url) {
+    els.printerUrlInput.value = state.settings.printer_base_url;
+  }
+  render();
+}
+
+function spoolTitle(spool) {
+  return `${spool.brand} ${spool.color_name}`;
+}
+
+function percentRemaining(spool) {
+  if (!spool.original_weight_g) return 0;
+  return Math.max(
+    0,
+    Math.min(100, Math.round((spool.remaining_weight_g / spool.original_weight_g) * 100))
+  );
+}
+
+function filteredSpools() {
+  const search = state.filters.search.toLowerCase();
+  return state.spools.filter((spool) => {
+    const haystack = [
+      spool.material,
+      spool.brand,
+      spool.color_name,
+      spool.location_name,
+      spool.notes,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return (
+      (!search || haystack.includes(search)) &&
+      (!state.filters.material || spool.material === state.filters.material) &&
+      (!state.filters.location || String(spool.location_id) === state.filters.location) &&
+      (!state.filters.status || spool.status === state.filters.status)
+    );
+  });
+}
+
+function render() {
+  renderSelectors();
+  renderMetrics();
+  renderCfs();
+  renderUsage();
+  renderInventory();
+  renderPrinterStatus();
+}
+
+function renderPrinterStatus(message = null) {
+  if (message) {
+    els.printerStatus.textContent = message;
+    return;
+  }
+  els.printerStatus.textContent = els.printerUrlInput.value ? "Ready" : "Not connected";
+}
+
+function renderSelectors() {
+  const materials = [
+    ...new Set(state.spools.map((spool) => spool.material)),
+  ].sort();
+  const currentMaterial = els.materialFilter.value;
+  els.materialFilter.innerHTML = `<option value="">All</option>${materials
+    .map((material) => `<option value="${escapeHtml(material)}">${escapeHtml(material)}</option>`)
+    .join("")}`;
+  els.materialFilter.value = currentMaterial;
+
+  const locationOptions = state.locations
+    .map((location) => `<option value="${location.id}">${escapeHtml(location.name)}</option>`)
+    .join("");
+  els.locationFilter.innerHTML = `<option value="">All</option>${locationOptions}`;
+  els.locationFilter.value = state.filters.location;
+  els.locationInput.innerHTML = `<option value="">None</option>${locationOptions}`;
+}
+
+function renderMetrics() {
+  const active = state.spools.filter((spool) => spool.status !== "retired");
+  const loaded = active.filter((spool) => spool.status === "loaded");
+  const open = active.filter((spool) => spool.status === "open");
+  const sealed = active.filter((spool) => spool.status === "sealed");
+  const low = active.filter((spool) => percentRemaining(spool) <= 20);
+  document.querySelector("#metricTotal").textContent = active.length;
+  document.querySelector("#metricLoaded").textContent = loaded.length;
+  document.querySelector("#metricOpen").textContent = open.length;
+  document.querySelector("#metricSealed").textContent = sealed.length;
+  document.querySelector("#metricLow").textContent = low.length;
+}
+
+function renderCfs() {
+  const cfsLocations = state.locations.filter((location) => location.kind === "cfs");
+  const loaded = state.spools.filter((spool) => spool.status === "loaded");
+  els.cfsCount.textContent = `${loaded.length} loaded`;
+  els.cfsGrid.innerHTML = "";
+  cfsLocations.forEach((location) => {
+    const slot = document.createElement("article");
+    slot.className = "slot";
+    const spool = state.spools.find(
+      (candidate) => candidate.location_id === location.id && candidate.status !== "retired"
+    );
+    slot.innerHTML = `<p class="slot-name">${escapeHtml(location.name)}</p>`;
+    if (spool) {
+      slot.appendChild(createSpoolCard(spool, true));
+    } else {
+      slot.innerHTML += `<div class="empty-slot">Empty</div>`;
+    }
+    els.cfsGrid.appendChild(slot);
+  });
+}
+
+function renderUsage() {
+  if (!state.usage.length) {
+    els.usageList.innerHTML = `<div class="empty-state">No usage logged yet</div>`;
+    return;
+  }
+  els.usageList.innerHTML = state.usage
+    .slice(0, 8)
+    .map((event) => {
+      const date = new Date(event.created_at).toLocaleDateString();
+      const title = `${event.grams_used}g - ${event.brand} ${event.color_name}`;
+      const note = event.project || event.notes || event.material;
+      return `
+        <article class="usage-item">
+          <span class="usage-dot" style="background:${escapeHtml(event.color_hex)}"></span>
+          <div>
+            <p class="usage-title">${escapeHtml(title)}</p>
+            <p class="usage-note">${escapeHtml(note)}</p>
+          </div>
+          <span class="usage-date">${escapeHtml(date)}</span>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderInventory() {
+  const spools = filteredSpools();
+  els.inventoryCount.textContent = `${spools.length} ${spools.length === 1 ? "spool" : "spools"}`;
+  if (!spools.length) {
+    els.inventoryGrid.innerHTML = `<div class="empty-state">No matching spools</div>`;
+    return;
+  }
+  els.inventoryGrid.innerHTML = "";
+  spools.forEach((spool) => els.inventoryGrid.appendChild(createSpoolCard(spool)));
+}
+
+function createSpoolCard(spool, compact = false) {
+  const template = document.querySelector("#spoolCardTemplate");
+  const card = template.content.firstElementChild.cloneNode(true);
+  const percent = percentRemaining(spool);
+  card.dataset.id = spool.id;
+  card.classList.toggle("low", percent <= 20);
+  card.querySelector(".swatch").style.background = spool.color_hex;
+  card.querySelector("h3").textContent = spoolTitle(spool);
+  card.querySelector(".spool-meta").textContent = `${spool.material} / ${spool.diameter}`;
+  card.querySelector(".weight-label").textContent = `${spool.remaining_weight_g}g of ${spool.original_weight_g}g (${percent}%)`;
+  card.querySelector(".bar span").style.width = `${percent}%`;
+
+  const tags = [
+    `<span class="tag ${spool.status}">${labelStatus(spool.status)}</span>`,
+    `<span class="tag">${escapeHtml(spool.location_name || "No location")}</span>`,
+  ];
+  if (spool.opened_at) tags.push(`<span class="tag">Opened ${escapeHtml(spool.opened_at)}</span>`);
+  card.querySelector(".tag-row").innerHTML = tags.join("");
+
+  card.querySelector('[data-action="edit"]').addEventListener("click", () => openSpoolDialog(spool));
+  card.querySelector('[data-action="usage"]').addEventListener("click", () => openUsageDialog(spool));
+  card.querySelector('[data-action="retire"]').addEventListener("click", () => retireSpool(spool));
+  if (compact) {
+    card.querySelector('[data-action="retire"]').remove();
+  }
+  return card;
+}
+
+function labelStatus(status) {
+  return {
+    loaded: "Loaded",
+    open: "Open",
+    sealed: "Sealed",
+    retired: "Retired",
+  }[status] || status;
+}
+
+function openSpoolDialog(spool = null) {
+  els.spoolForm.reset();
+  renderSelectors();
+  els.spoolDialogTitle.textContent = spool ? "Edit Spool" : "Add Spool";
+  fields.spoolId.value = spool?.id || "";
+  state.catalogResults = [];
+  state.pendingBarcode = "";
+  renderCatalogResults();
+  setBarcodeStatus("");
+  fields.barcode.value = spool?.barcode || "";
+  fields.material.value = spool?.material || "PLA";
+  fields.brand.value = spool?.brand || "";
+  fields.colorName.value = spool?.color_name || "";
+  fields.colorHex.value = spool?.color_hex || "#333333";
+  fields.status.value = spool?.status || "sealed";
+  fields.location.value = spool?.location_id || defaultLocationForStatus(fields.status.value);
+  fields.originalWeight.value = spool?.original_weight_g || 1000;
+  fields.remainingWeight.value = spool?.remaining_weight_g || 1000;
+  fields.diameter.value = spool?.diameter || "1.75mm";
+  fields.purchasedAt.value = spool?.purchased_at || "";
+  fields.openedAt.value = spool?.opened_at || "";
+  fields.notes.value = spool?.notes || "";
+  els.spoolDialog.showModal();
+}
+
+function openUsageDialog(spool) {
+  els.usageForm.reset();
+  fields.usageSpoolId.value = spool.id;
+  els.usageSpoolName.textContent = `${spoolTitle(spool)} - ${spool.remaining_weight_g}g remaining`;
+  fields.gramsUsed.max = spool.remaining_weight_g;
+  els.usageDialog.showModal();
+}
+
+async function retireSpool(spool) {
+  const retiredLocation = state.locations.find((location) => location.kind === "retired");
+  await api(`/api/spools/${spool.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      ...spool,
+      status: "retired",
+      location_id: retiredLocation?.id || spool.location_id,
+    }),
+  });
+  await refresh();
+}
+
+function defaultLocationForStatus(status) {
+  const match =
+    status === "loaded"
+      ? state.locations.find((location) => location.kind === "cfs")
+      : status === "open"
+        ? state.locations.find((location) => location.kind === "dryer")
+        : status === "retired"
+          ? state.locations.find((location) => location.kind === "retired")
+          : state.locations.find((location) => location.name === "Sealed Stock");
+  return match?.id || "";
+}
+
+function payloadFromSpoolForm() {
+  return {
+    barcode: fields.barcode.value,
+    material: fields.material.value,
+    brand: fields.brand.value,
+    color_name: fields.colorName.value,
+    color_hex: fields.colorHex.value,
+    status: fields.status.value,
+    location_id: fields.location.value,
+    original_weight_g: fields.originalWeight.value,
+    remaining_weight_g: fields.remainingWeight.value,
+    diameter: fields.diameter.value,
+    purchased_at: fields.purchasedAt.value,
+    opened_at: fields.openedAt.value,
+    notes: fields.notes.value,
+  };
+}
+
+function setBarcodeStatus(message) {
+  els.barcodeStatus.textContent = message;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function printerPayload() {
+  return { base_url: els.printerUrlInput.value.trim() };
+}
+
+function showPrinterOutput(message, detail = null) {
+  els.printerOutput.hidden = false;
+  els.printerOutput.textContent = detail
+    ? `${message}\n${JSON.stringify(detail, null, 2)}`
+    : message;
+}
+
+async function probePrinter() {
+  renderPrinterStatus("Testing...");
+  try {
+    const result = await api("/api/printer/probe", {
+      method: "POST",
+      body: JSON.stringify(printerPayload()),
+    });
+    const candidates = result.cfs_candidates?.length
+      ? result.cfs_candidates.join(", ")
+      : "No obvious CFS object names found";
+    renderPrinterStatus("Connected");
+    showPrinterOutput(
+      `Connected to printer. Found ${result.object_count} printer objects.\nCFS candidates: ${candidates}`,
+      result.printer
+    );
+  } catch (error) {
+    renderPrinterStatus("Could not connect");
+    showPrinterOutput(error.message);
+  }
+}
+
+async function syncPrinter() {
+  renderPrinterStatus("Syncing...");
+  try {
+    const result = await api("/api/printer/sync", {
+      method: "POST",
+      body: JSON.stringify(printerPayload()),
+    });
+    state.locations = result.locations;
+    state.spools = result.spools;
+    state.usage = result.usage;
+    state.settings = result.settings || state.settings;
+    state.catalogCount = result.catalog_count || state.catalogCount;
+    renderPrinterStatus("Synced");
+    showPrinterOutput(`Synced ${result.synced} CFS slot${result.synced === 1 ? "" : "s"} from ${result.source}.`);
+    render();
+  } catch (error) {
+    renderPrinterStatus("Sync failed");
+    showPrinterOutput(error.message);
+  }
+}
+
+function renderCatalogResults() {
+  if (state.pendingBarcode) {
+    renderBarcodeCandidates();
+    return;
+  }
+  if (!state.catalogCount) {
+    els.catalogResults.innerHTML = `<div class="catalog-help">No catalog loaded yet.</div>`;
+    return;
+  }
+  const typed = [fields.brand.value, fields.material.value, fields.colorName.value]
+    .join(" ")
+    .trim();
+  if (typed.length < 2) {
+    els.catalogResults.innerHTML = `<div class="catalog-help">Catalog matches appear here as you enter brand, material, and color. You can save manual entries even when there is no match.</div>`;
+    return;
+  }
+  if (!state.catalogResults.length) {
+    els.catalogResults.innerHTML = `<div class="catalog-help">No catalog matches.</div>`;
+    return;
+  }
+  els.catalogResults.innerHTML = state.catalogResults
+    .map(
+      (item) => `
+        <button class="catalog-result" type="button" data-catalog-id="${item.id}">
+          <span class="catalog-swatch" style="background:${escapeHtml(item.color_hex || "#888888")}"></span>
+          <span>
+            <strong>${escapeHtml(item.brand)}</strong>
+            <small>${escapeHtml(item.material)} / ${escapeHtml(item.color_name)}</small>
+          </span>
+        </button>
+      `
+    )
+    .join("");
+  els.catalogResults.querySelectorAll("[data-catalog-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const selected = state.catalogResults.find((item) => String(item.id) === button.dataset.catalogId);
+      if (selected) applyCatalogItem(selected);
+    });
+  });
+}
+
+function applyCatalogItem(selected) {
+  if (selected.barcode && !fields.barcode.value) {
+    fields.barcode.value = selected.barcode;
+  }
+  fields.brand.value = selected.brand;
+  fields.material.value = selected.material;
+  fields.colorName.value = selected.color_name;
+  fields.colorHex.value = selected.color_hex || "#888888";
+  state.catalogResults = [];
+  state.pendingBarcode = "";
+  renderCatalogResults();
+}
+
+function applySpoolProduct(spool) {
+  fields.brand.value = spool.brand;
+  fields.material.value = spool.material;
+  fields.colorName.value = spool.color_name;
+  fields.colorHex.value = spool.color_hex || "#888888";
+  fields.diameter.value = spool.diameter || "1.75mm";
+  fields.originalWeight.value = spool.original_weight_g || 1000;
+  fields.remainingWeight.value = spool.original_weight_g || 1000;
+  state.catalogResults = [];
+  state.pendingBarcode = "";
+  renderCatalogResults();
+}
+
+function candidateSpools() {
+  const hasSpecificText = fields.brand.value.trim() || fields.colorName.value.trim();
+  const materialText =
+    hasSpecificText || fields.material.value.trim().toUpperCase() !== "PLA"
+      ? fields.material.value
+      : "";
+  const terms = [fields.brand.value, materialText, fields.colorName.value]
+    .join(" ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  return state.spools
+    .filter((spool) => spool.status !== "retired")
+    .filter((spool) => {
+      if (!terms.length) return true;
+      const haystack = [spool.brand, spool.material, spool.color_name].join(" ").toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    })
+    .sort((a, b) => {
+      const statusOrder = { sealed: 1, open: 2, loaded: 3, retired: 4 };
+      return (
+        (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9) ||
+        a.brand.localeCompare(b.brand) ||
+        a.color_name.localeCompare(b.color_name)
+      );
+    })
+    .slice(0, 30);
+}
+
+function renderBarcodeCandidates() {
+  const spools = candidateSpools();
+  if (!spools.length) {
+    els.catalogResults.innerHTML = `<div class="catalog-help">No barcode match yet. Enter the filament details, then save; this barcode will be remembered next time.</div>`;
+    return;
+  }
+  els.catalogResults.innerHTML = `
+    <div class="catalog-help">No barcode match yet. Pick the matching filament below to teach this barcode.</div>
+    ${spools
+      .map(
+        (spool) => `
+          <button class="catalog-result" type="button" data-barcode-spool-id="${spool.id}">
+            <span class="catalog-swatch" style="background:${escapeHtml(spool.color_hex || "#888888")}"></span>
+            <span>
+              <strong>${escapeHtml(spool.brand)} ${escapeHtml(spool.color_name)}</strong>
+              <small>${escapeHtml(spool.material)} / ${escapeHtml(labelStatus(spool.status))} / ${escapeHtml(spool.location_name || "No location")}</small>
+            </span>
+          </button>
+        `
+      )
+      .join("")}
+  `;
+  els.catalogResults.querySelectorAll("[data-barcode-spool-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const selected = state.spools.find((spool) => String(spool.id) === button.dataset.barcodeSpoolId);
+      if (selected) {
+        applySpoolProduct(selected);
+        setBarcodeStatus("Product details copied. Save to remember this barcode.");
+      }
+    });
+  });
+}
+
+function debounce(fn, delay = 250) {
+  let timer = null;
+  return (...args) => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => fn(...args), delay);
+  };
+}
+
+async function searchCatalog() {
+  const brand = fields.brand.value.trim();
+  const material = fields.material.value.trim();
+  const color = fields.colorName.value.trim();
+  if ([brand, material, color].join(" ").trim().length < 2) {
+    state.catalogResults = [];
+    renderCatalogResults();
+    return;
+  }
+  try {
+    const params = new URLSearchParams({
+      brand,
+      material,
+      color,
+      limit: "30",
+    });
+    const data = await api(`/api/catalog/search?${params.toString()}`);
+    state.catalogResults = data.results || [];
+    renderCatalogResults();
+  } catch (error) {
+    state.catalogResults = [];
+    els.catalogResults.innerHTML = `<div class="catalog-help">Catalog search failed.</div>`;
+  }
+}
+
+async function lookupBarcode(code) {
+  const barcode = String(code || "").trim();
+  if (!barcode) return;
+  fields.barcode.value = barcode;
+  setBarcodeStatus(`Found ${barcode}. Looking for a match...`);
+  try {
+    const params = new URLSearchParams({ code: barcode });
+    const data = await api(`/api/barcode/lookup?${params.toString()}`);
+    if (data.spools?.length) {
+      applySpoolProduct(data.spools[0]);
+      setBarcodeStatus("Matched an existing spool. Product details copied.");
+      return;
+    }
+    if (data.catalog?.length) {
+      applyCatalogItem(data.catalog[0]);
+      setBarcodeStatus("Matched the catalog. Product details copied.");
+      return;
+    }
+    state.pendingBarcode = barcode;
+    state.catalogResults = [];
+    renderBarcodeCandidates();
+    setBarcodeStatus("No match yet. Pick an existing filament below or fill the details once.");
+  } catch (error) {
+    setBarcodeStatus("Barcode lookup failed. You can still save it manually.");
+  }
+}
+
+async function scanVideoFrame() {
+  if (!barcodeDetector || !barcodeStream) return;
+  try {
+    const codes = await barcodeDetector.detect(els.barcodeVideo);
+    if (codes.length) {
+      const value = codes[0].rawValue;
+      stopBarcodeScanner();
+      await lookupBarcode(value);
+      return;
+    }
+    barcodeScanTimer = window.setTimeout(scanVideoFrame, 180);
+  } catch (error) {
+    barcodeScanTimer = window.setTimeout(scanVideoFrame, 350);
+  }
+}
+
+async function startBarcodeScanner() {
+  if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
+    setBarcodeStatus("Camera barcode scanning is not available in this browser.");
+    els.barcodeScanner.hidden = false;
+    return;
+  }
+  stopBarcodeScanner();
+  els.barcodeScanner.hidden = false;
+  setBarcodeStatus("Starting camera...");
+  try {
+    barcodeDetector = new BarcodeDetector({
+      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code"],
+    });
+    barcodeStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false,
+    });
+    els.barcodeVideo.srcObject = barcodeStream;
+    await els.barcodeVideo.play();
+    setBarcodeStatus("Point the camera at the box barcode");
+    scanVideoFrame();
+  } catch (error) {
+    setBarcodeStatus("Could not start the camera. Check browser camera permission.");
+    stopBarcodeScanner(false);
+  }
+}
+
+function stopBarcodeScanner(hide = true) {
+  if (barcodeScanTimer) {
+    window.clearTimeout(barcodeScanTimer);
+    barcodeScanTimer = null;
+  }
+  if (barcodeStream) {
+    barcodeStream.getTracks().forEach((track) => track.stop());
+    barcodeStream = null;
+  }
+  els.barcodeVideo.srcObject = null;
+  if (hide) {
+    els.barcodeScanner.hidden = true;
+  }
+}
+
+els.addSpoolButton.addEventListener("click", () => openSpoolDialog());
+els.probePrinterButton.addEventListener("click", probePrinter);
+els.syncPrinterButton.addEventListener("click", syncPrinter);
+els.printerUrlInput.addEventListener("input", () => renderPrinterStatus());
+els.scanBarcodeButton.addEventListener("click", startBarcodeScanner);
+els.stopBarcodeButton.addEventListener("click", () => stopBarcodeScanner());
+fields.barcode.addEventListener("change", () => lookupBarcode(fields.barcode.value));
+[fields.brand, fields.material, fields.colorName].forEach((input) => {
+  input.addEventListener("input", debounce(() => {
+    if (state.pendingBarcode) {
+      renderBarcodeCandidates();
+    } else {
+      searchCatalog();
+    }
+  }, 220));
+});
+
+document.querySelectorAll("[data-close-dialog]").forEach((button) => {
+  button.addEventListener("click", () => {
+    stopBarcodeScanner();
+    button.closest("dialog").close();
+  });
+});
+
+els.spoolDialog.addEventListener("close", () => stopBarcodeScanner());
+
+els.spoolForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const id = fields.spoolId.value;
+  await api(id ? `/api/spools/${id}` : "/api/spools", {
+    method: id ? "PUT" : "POST",
+    body: JSON.stringify(payloadFromSpoolForm()),
+  });
+  stopBarcodeScanner();
+  els.spoolDialog.close();
+  await refresh();
+});
+
+els.usageForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await api(`/api/spools/${fields.usageSpoolId.value}/usage`, {
+    method: "POST",
+    body: JSON.stringify({
+      grams_used: fields.gramsUsed.value,
+      project: fields.project.value,
+      notes: fields.usageNotes.value,
+    }),
+  });
+  els.usageDialog.close();
+  await refresh();
+});
+
+fields.status.addEventListener("change", () => {
+  fields.location.value = defaultLocationForStatus(fields.status.value);
+});
+
+[
+  [els.searchInput, "search"],
+  [els.materialFilter, "material"],
+  [els.locationFilter, "location"],
+  [els.statusFilter, "status"],
+].forEach(([input, key]) => {
+  input.addEventListener("input", () => {
+    state.filters[key] = input.value;
+    render();
+  });
+});
+
+refresh().catch((error) => {
+  document.body.innerHTML = `<main><div class="empty-state">${escapeHtml(error.message)}</div></main>`;
+});

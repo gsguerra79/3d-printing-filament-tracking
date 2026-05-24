@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Filament Inventory</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">3D Printing</p>
+        <h1>Filament Inventory</h1>
+      </div>
+      <button class="primary" id="addSpoolButton" type="button">
+        <span class="button-icon">+</span>
+        Add Spool
+      </button>
+    </header>
+
+    <main>
+      <section class="metrics" aria-label="Inventory summary">
+        <article>
+          <span class="metric-label">Total</span>
+          <strong id="metricTotal">0</strong>
+        </article>
+        <article>
+          <span class="metric-label">Loaded</span>
+          <strong id="metricLoaded">0</strong>
+        </article>
+        <article>
+          <span class="metric-label">Open</span>
+          <strong id="metricOpen">0</strong>
+        </article>
+        <article>
+          <span class="metric-label">Sealed</span>
+          <strong id="metricSealed">0</strong>
+        </article>
+        <article>
+          <span class="metric-label">Low</span>
+          <strong id="metricLow">0</strong>
+        </article>
+      </section>
+
+      <section class="controls" aria-label="Filters">
+        <label>
+          Search
+          <input id="searchInput" type="search" placeholder="Brand, color, material" />
+        </label>
+        <label>
+          Material
+          <select id="materialFilter">
+            <option value="">All</option>
+          </select>
+        </label>
+        <label>
+          Location
+          <select id="locationFilter">
+            <option value="">All</option>
+          </select>
+        </label>
+        <label>
+          Status
+          <select id="statusFilter">
+            <option value="">All</option>
+            <option value="loaded">Loaded</option>
+            <option value="open">Open</option>
+            <option value="sealed">Sealed</option>
+            <option value="retired">Retired</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="printer-panel" aria-label="Printer sync">
+        <div>
+          <div class="section-heading compact">
+            <h2>K2 Plus CFS Sync</h2>
+            <span id="printerStatus">Not connected</span>
+          </div>
+          <div class="printer-controls">
+            <label>
+              Printer address
+              <input id="printerUrlInput" placeholder="http://192.168.5.237:4408" />
+            </label>
+            <button class="secondary" id="probePrinterButton" type="button">Test</button>
+            <button class="primary" id="syncPrinterButton" type="button">Sync CFS</button>
+          </div>
+        </div>
+        <pre id="printerOutput" aria-live="polite"></pre>
+      </section>
+
+      <section class="split">
+        <div class="panel">
+          <div class="section-heading">
+            <h2>CFS</h2>
+            <span id="cfsCount">0 loaded</span>
+          </div>
+          <div class="slot-grid" id="cfsGrid"></div>
+        </div>
+
+        <div class="panel">
+          <div class="section-heading">
+            <h2>Recent Usage</h2>
+          </div>
+          <div class="usage-list" id="usageList"></div>
+        </div>
+      </section>
+
+      <section class="inventory-section">
+        <div class="section-heading">
+          <h2>Inventory</h2>
+          <span id="inventoryCount">0 spools</span>
+        </div>
+        <div class="inventory-grid" id="inventoryGrid"></div>
+      </section>
+    </main>
+
+    <dialog id="spoolDialog">
+      <form id="spoolForm" method="dialog">
+        <div class="dialog-header">
+          <h2 id="spoolDialogTitle">Add Spool</h2>
+          <button class="icon-button" type="button" data-close-dialog aria-label="Close">x</button>
+        </div>
+        <input type="hidden" id="spoolId" />
+        <div class="form-grid">
+          <div class="barcode-entry full">
+            <label>
+              Barcode
+              <input id="barcodeInput" name="barcode" placeholder="Scan or type the box barcode" />
+            </label>
+            <button class="secondary" id="scanBarcodeButton" type="button">Scan Barcode</button>
+          </div>
+          <div class="scanner-status full" id="barcodeStatus" aria-live="polite"></div>
+          <div class="barcode-scanner full" id="barcodeScanner" hidden>
+            <video id="barcodeVideo" playsinline muted></video>
+            <button class="secondary" id="stopBarcodeButton" type="button">Stop Camera</button>
+          </div>
+          <label>
+            Material
+            <input id="materialInput" name="material" list="materials" required placeholder="PLA" />
+            <datalist id="materials">
+              <option value="PLA"></option>
+              <option value="PLA+"></option>
+              <option value="PETG"></option>
+              <option value="ABS"></option>
+              <option value="ASA"></option>
+              <option value="TPU"></option>
+              <option value="PC"></option>
+              <option value="Nylon"></option>
+            </datalist>
+          </label>
+          <label>
+            Brand
+            <input id="brandInput" name="brand" required placeholder="Bambu Lab" />
+          </label>
+          <label>
+            Color
+            <input id="colorNameInput" name="color_name" required placeholder="Matte Black" />
+          </label>
+          <label>
+            Swatch
+            <input id="colorHexInput" name="color_hex" type="color" value="#333333" />
+          </label>
+          <div class="catalog-results full" id="catalogResults"></div>
+          <label>
+            Status
+            <select id="statusInput" name="status">
+              <option value="sealed">Sealed</option>
+              <option value="open">Open</option>
+              <option value="loaded">Loaded</option>
+              <option value="retired">Retired</option>
+            </select>
+          </label>
+          <label>
+            Location
+            <select id="locationInput" name="location_id"></select>
+          </label>
+          <label>
+            Original grams
+            <input id="originalWeightInput" name="original_weight_g" type="number" min="1" value="1000" />
+          </label>
+          <label>
+            Remaining grams
+            <input id="remainingWeightInput" name="remaining_weight_g" type="number" min="0" value="1000" />
+          </label>
+          <label>
+            Diameter
+            <input id="diameterInput" name="diameter" value="1.75mm" />
+          </label>
+          <label>
+            Purchased
+            <input id="purchasedAtInput" name="purchased_at" type="date" />
+          </label>
+          <label>
+            Opened
+            <input id="openedAtInput" name="opened_at" type="date" />
+          </label>
+          <label class="full">
+            Notes
+            <textarea id="notesInput" name="notes" rows="3"></textarea>
+          </label>
+        </div>
+        <footer class="dialog-actions">
+          <button class="secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="primary" type="submit">Save Spool</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="usageDialog">
+      <form id="usageForm" method="dialog">
+        <div class="dialog-header">
+          <h2>Log Usage</h2>
+          <button class="icon-button" type="button" data-close-dialog aria-label="Close">x</button>
+        </div>
+        <input type="hidden" id="usageSpoolId" />
+        <p class="selected-spool" id="usageSpoolName"></p>
+        <div class="form-grid single">
+          <label>
+            Grams used
+            <input id="gramsUsedInput" name="grams_used" type="number" min="1" required />
+          </label>
+          <label>
+            Project
+            <input id="projectInput" name="project" placeholder="Printer job or part" />
+          </label>
+          <label>
+            Notes
+            <textarea id="usageNotesInput" name="notes" rows="3"></textarea>
+          </label>
+        </div>
+        <footer class="dialog-actions">
+          <button class="secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="primary" type="submit">Log Usage</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <template id="spoolCardTemplate">
+      <article class="spool-card">
+        <div class="spool-main">
+          <span class="swatch"></span>
+          <div>
+            <h3></h3>
+            <p class="spool-meta"></p>
+          </div>
+        </div>
+        <div class="weight-row">
+          <span class="weight-label"></span>
+          <span class="bar"><span></span></span>
+        </div>
+        <div class="tag-row"></div>
+        <div class="card-actions">
+          <button type="button" data-action="edit">Edit</button>
+          <button type="button" data-action="usage">Use</button>
+          <button type="button" data-action="retire">Retire</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
