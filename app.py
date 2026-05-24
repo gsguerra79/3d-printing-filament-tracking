@@ -906,6 +906,8 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                 ).fetchone()
 
             if existing:
+                remaining_weight = existing["remaining_weight_g"]
+                original_weight = existing["original_weight_g"]
                 con.execute(
                     """
                     UPDATE spools
@@ -921,8 +923,8 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                         payload["color_name"],
                         payload["color_hex"],
                         payload["diameter"],
-                        payload["original_weight_g"],
-                        payload["remaining_weight_g"],
+                        original_weight,
+                        remaining_weight,
                         location_id,
                         slot.get("raw", {}).get("slot_name") or f"Slot {slot['slot_index'] + 1}",
                         payload["notes"],
@@ -1128,16 +1130,18 @@ def choose_spool_for_part(part: dict, loaded_spools: list[sqlite3.Row], used_ids
         score = 0
         if material_matches(part.get("material", ""), spool["material"]):
             score += 100
+        else:
+            continue
         if part.get("color_hex"):
             distance = color_distance(part["color_hex"], spool["color_hex"])
             if distance <= 60:
                 score += 80 - distance
+            else:
+                continue
         if spool["id"] in used_ids:
             score -= 50
         if score > 0:
             candidates.append((score, spool))
-    if not candidates and loaded_spools:
-        candidates = [(1 if spool["id"] not in used_ids else 0, spool) for spool in loaded_spools]
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
@@ -1178,7 +1182,11 @@ def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sq
         remaining -= part_grams
         existing_spool, existing_grams = allocations_by_id.get(spool["id"], (spool, 0))
         allocations_by_id[spool["id"]] = (existing_spool, existing_grams + part_grams)
-    return [(spool, amount) for spool, amount in allocations_by_id.values() if amount > 0]
+    return [
+        (spool, min(amount, max(0, spool["remaining_weight_g"])))
+        for spool, amount in allocations_by_id.values()
+        if amount > 0 and spool["remaining_weight_g"] > 0
+    ]
 
 
 def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
@@ -1259,7 +1267,7 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
         with connect() as con:
             for spool, grams in allocations:
                 remaining = max(0, spool["remaining_weight_g"] - grams)
-                status = "retired" if remaining == 0 else spool["status"]
+                status = spool["status"] if spool["status"] == "loaded" else ("retired" if remaining == 0 else spool["status"])
                 con.execute(
                     """
                     UPDATE spools
