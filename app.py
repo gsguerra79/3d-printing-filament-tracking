@@ -1276,19 +1276,40 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                     """,
                     (remaining, status, created, spool["id"]),
                 )
-                con.execute(
+                event_update = con.execute(
                     """
-                    INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    UPDATE usage_events
+                    SET grams_used = grams_used + ?, created_at = ?
+                    WHERE id = (
+                        SELECT id FROM usage_events
+                        WHERE spool_id = ?
+                          AND project = ?
+                          AND notes LIKE 'Auto printer tracking%'
+                        ORDER BY id DESC
+                        LIMIT 1
+                    )
                     """,
                     (
-                        spool["id"],
                         grams,
-                        snapshot["filename"],
-                        f"Auto printer tracking from {snapshot['basis']} while print state was {snapshot['state'] or 'unknown'}.",
                         created,
+                        spool["id"],
+                        snapshot["filename"],
                     ),
                 )
+                if event_update.rowcount == 0:
+                    con.execute(
+                        """
+                        INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            spool["id"],
+                            grams,
+                            snapshot["filename"],
+                            f"Auto printer tracking from {snapshot['basis']} while print state was {snapshot['state'] or 'unknown'}.",
+                            created,
+                        ),
+                    )
 
         message = f"Deducted {whole_grams}g from {len(allocations)} loaded spool(s)."
         set_settings(
