@@ -565,18 +565,37 @@ async function fetchPrinterUsageSnapshotFromPage() {
 }
 
 async function applyPrinterUsageSnapshot({ reset = false, enable = false } = {}) {
-  const snapshot = await fetchPrinterUsageSnapshotFromPage();
-  const result = await api("/api/printer/usage/snapshot", {
-    method: "POST",
-    body: JSON.stringify({
-      base_url: printerBaseUrl(),
-      snapshot,
-      reset,
-      enable,
-    }),
-  });
-  applyBootstrapPayload(result);
-  return result;
+  try {
+    const snapshot = await fetchPrinterUsageSnapshotFromPage();
+    const result = await api("/api/printer/usage/snapshot", {
+      method: "POST",
+      body: JSON.stringify({
+        base_url: printerBaseUrl(),
+        snapshot,
+        reset,
+        enable,
+      }),
+    });
+    applyBootstrapPayload(result);
+    return result;
+  } catch (directError) {
+    const fallbackPath = enable ? "/api/printer/usage/start" : "/api/printer/usage/check";
+    try {
+      const result = await api(fallbackPath, {
+        method: "POST",
+        body: JSON.stringify({ ...printerPayload(), reset }),
+      });
+      applyBootstrapPayload(result);
+      return {
+        ...result,
+        message: `${result.message || "Usage tracking updated."} Browser access was blocked, so the local app read the printer instead.`,
+      };
+    } catch (backendError) {
+      throw new Error(
+        `Could not read the printer from the browser or the local app. Browser said: ${directError.message}. Local app said: ${backendError.message}.`
+      );
+    }
+  }
 }
 
 function schedulePageUsageTracking() {
