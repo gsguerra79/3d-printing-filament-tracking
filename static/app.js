@@ -35,6 +35,9 @@ const els = {
   printerUrlInput: document.querySelector("#printerUrlInput"),
   probePrinterButton: document.querySelector("#probePrinterButton"),
   syncPrinterButton: document.querySelector("#syncPrinterButton"),
+  checkUsageButton: document.querySelector("#checkUsageButton"),
+  startUsageButton: document.querySelector("#startUsageButton"),
+  stopUsageButton: document.querySelector("#stopUsageButton"),
   printerStatus: document.querySelector("#printerStatus"),
   printerOutput: document.querySelector("#printerOutput"),
   catalogResults: document.querySelector("#catalogResults"),
@@ -140,6 +143,10 @@ function render() {
 function renderPrinterStatus(message = null) {
   if (message) {
     els.printerStatus.textContent = message;
+    return;
+  }
+  if (state.settings.usage_monitor_enabled === "1") {
+    els.printerStatus.textContent = "Tracking usage";
     return;
   }
   els.printerStatus.textContent = els.printerUrlInput.value ? "Ready" : "Not connected";
@@ -412,6 +419,78 @@ async function syncPrinter() {
   }
 }
 
+function applyBootstrapPayload(result) {
+  state.locations = result.locations;
+  state.spools = result.spools;
+  state.usage = result.usage;
+  state.settings = result.settings || state.settings;
+  state.catalogCount = result.catalog_count || state.catalogCount;
+}
+
+function usageSummary(result) {
+  const snapshot = result.snapshot;
+  const fileLine = snapshot?.filename ? `\nPrint: ${snapshot.filename}` : "";
+  const progressLine =
+    snapshot?.progress !== undefined
+      ? `\nProgress: ${Math.round(snapshot.progress * 1000) / 10}%`
+      : "";
+  const allocationLine = result.allocations?.length
+    ? `\n${result.allocations.map((item) => `${item.grams}g - ${item.spool}`).join("\n")}`
+    : "";
+  return `${result.message || "Usage tracking updated."}${fileLine}${progressLine}${allocationLine}`;
+}
+
+async function checkPrinterUsage(reset = false) {
+  renderPrinterStatus(reset ? "Setting baseline..." : "Checking usage...");
+  try {
+    const result = await api("/api/printer/usage/check", {
+      method: "POST",
+      body: JSON.stringify({ ...printerPayload(), reset }),
+    });
+    applyBootstrapPayload(result);
+    renderPrinterStatus();
+    showPrinterOutput(usageSummary(result));
+    render();
+  } catch (error) {
+    renderPrinterStatus("Usage check failed");
+    showPrinterOutput(error.message);
+  }
+}
+
+async function startUsageTracking() {
+  renderPrinterStatus("Starting tracking...");
+  try {
+    const result = await api("/api/printer/usage/start", {
+      method: "POST",
+      body: JSON.stringify(printerPayload()),
+    });
+    applyBootstrapPayload(result);
+    renderPrinterStatus();
+    showPrinterOutput(`${usageSummary(result)}\nUsage tracking is now on.`);
+    render();
+  } catch (error) {
+    renderPrinterStatus("Tracking failed");
+    showPrinterOutput(error.message);
+  }
+}
+
+async function stopUsageTracking() {
+  renderPrinterStatus("Stopping tracking...");
+  try {
+    const result = await api("/api/printer/usage/stop", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    applyBootstrapPayload(result);
+    renderPrinterStatus();
+    showPrinterOutput("Usage tracking stopped.");
+    render();
+  } catch (error) {
+    renderPrinterStatus("Stop failed");
+    showPrinterOutput(error.message);
+  }
+}
+
 function renderCatalogResults() {
   if (state.pendingBarcode) {
     renderBarcodeCandidates();
@@ -662,6 +741,9 @@ function stopBarcodeScanner(hide = true) {
 els.addSpoolButton.addEventListener("click", () => openSpoolDialog());
 els.probePrinterButton.addEventListener("click", probePrinter);
 els.syncPrinterButton.addEventListener("click", syncPrinter);
+els.checkUsageButton.addEventListener("click", () => checkPrinterUsage(false));
+els.startUsageButton.addEventListener("click", startUsageTracking);
+els.stopUsageButton.addEventListener("click", stopUsageTracking);
 els.printerUrlInput.addEventListener("input", () => renderPrinterStatus());
 els.scanBarcodeButton.addEventListener("click", startBarcodeScanner);
 els.stopBarcodeButton.addEventListener("click", () => stopBarcodeScanner());

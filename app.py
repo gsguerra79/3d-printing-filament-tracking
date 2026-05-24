@@ -5,6 +5,9 @@ import json
 import sqlite3
 import csv
 import io
+import math
+import threading
+import time
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +19,20 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = ROOT / "static"
 DB_PATH = ROOT / "filament_inventory.sqlite3"
+USAGE_MONITOR_LOCK = threading.Lock()
+USAGE_MONITOR_STARTED = False
+USAGE_MONITOR_INTERVAL_SECONDS = 30
+
+MATERIAL_DENSITY = {
+    "PLA": 1.24,
+    "PETG": 1.27,
+    "ABS": 1.04,
+    "ASA": 1.07,
+    "TPU": 1.20,
+    "PC": 1.20,
+    "NYLON": 1.14,
+    "PA": 1.14,
+}
 
 STARTER_CATALOG = [
     ("Bambu Lab", "PLA", "Basic Black", "#000000"),
@@ -176,6 +193,34 @@ def init_db() -> None:
 
 def row_to_dict(row: sqlite3.Row) -> dict:
     return {key: row[key] for key in row.keys()}
+
+
+def get_setting(key: str, fallback: str = "") -> str:
+    with connect() as con:
+        row = con.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else fallback
+
+
+def set_setting(key: str, value) -> None:
+    with connect() as con:
+        con.execute(
+            """
+            INSERT OR REPLACE INTO settings (key, value)
+            VALUES (?, ?)
+            """,
+            (key, str(value)),
+        )
+
+
+def set_settings(values: dict) -> None:
+    with connect() as con:
+        con.executemany(
+            """
+            INSERT OR REPLACE INTO settings (key, value)
+            VALUES (?, ?)
+            """,
+            [(key, str(value)) for key, value in values.items()],
+        )
 
 
 def fetch_bootstrap() -> dict:
@@ -932,6 +977,375 @@ def upsert_synced_slots(slots: list[dict]) -> int:
     return touched
 
 
+def clean_float(value, fallback: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return fallback
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def density_for_material(material: str) -> float:
+    text = clean_text(material).upper()
+    for key, density in MATERIAL_DENSITY.items():
+        if key in text:
+            return density
+    return 1.24
+
+
+def diameter_to_mm(value: str) -> float:
+    text = clean_text(value, "1.75").lower().replace("mm", "")
+    return clean_float(text, 1.75)
+
+
+def filament_mm_to_grams(length_mm: float, material: str, diameter: str = "1.75mm") -> float:
+    diameter_mm = diameter_to_mm(diameter)
+    area_mm2 = math.pi * (diameter_mm / 2) ** 2
+    volume_cm3 = (max(0.0, length_mm) * area_mm2) / 1000
+    return volume_cm3 * density_for_material(material)
+
+
+def normalize_hex(value: str) -> str:
+    return normalize_color(value).lower()
+
+
+def color_distance(left: str, right: str) -> int:
+    left = normalize_hex(left).lstrip("#")
+    right = normalize_hex(right).lstrip("#")
+    try:
+        return sum(
+            abs(int(left[index : index + 2], 16) - int(right[index : index + 2], 16))
+            for index in (0, 2, 4)
+        )
+    except ValueError:
+        return 999
+
+
+def material_matches(left: str, right: str) -> bool:
+    left = clean_text(left).upper()
+    right = clean_text(right).upper()
+    if not left or not right:
+        return False
+    return left in right or right in left or left.split()[0] == right.split()[0]
+
+
+def printer_usage_payload(base_url: str) -> dict:
+    try:
+        payload = moonraker_result(
+            printer_get(base_url, "/printer/objects/query?print_stats&virtual_sdcard")
+        )
+        status = payload.get("status", payload)
+        if isinstance(status, dict) and ("print_stats" in status or "virtual_sdcard" in status):
+            return status
+    except ValueError:
+        pass
+
+    print_stats = moonraker_result(printer_get(base_url, "/printer/objects/query?print_stats"))
+    virtual_sdcard = moonraker_result(printer_get(base_url, "/printer/objects/query?virtual_sdcard"))
+    return {
+        "print_stats": print_stats.get("status", print_stats).get("print_stats", {}),
+        "virtual_sdcard": virtual_sdcard.get("status", virtual_sdcard).get("virtual_sdcard", {}),
+    }
+
+
+def list_float_values(value) -> list[float]:
+    if not isinstance(value, list):
+        return []
+    return [max(0.0, clean_float(item, 0.0)) for item in value]
+
+
+def fetch_printer_usage_snapshot(base_url: str) -> dict:
+    status = printer_usage_payload(base_url)
+    print_stats = status.get("print_stats") or {}
+    virtual_sdcard = status.get("virtual_sdcard") or {}
+    current_print = virtual_sdcard.get("cur_print_data") or {}
+    metadata = current_print.get("metadata") or {}
+    model_info = metadata.get("model_info") or {}
+
+    filename = (
+        clean_text(print_stats.get("filename"))
+        or clean_text(current_print.get("filename"))
+        or Path(clean_text(virtual_sdcard.get("file_path"))).name
+    )
+    state = clean_text(print_stats.get("state") or current_print.get("status"))
+    start_time = clean_text(current_print.get("start_time") or metadata.get("uuid"))
+    material = clean_text(
+        metadata.get("filament_type") or model_info.get("MaterialType") or print_stats.get("filament_type")
+    ).upper()
+    progress = clean_float(virtual_sdcard.get("progress"), 0.0)
+    progress = max(0.0, min(progress, 1.0))
+    planned_grams = list_float_values(metadata.get("filament_used_g"))
+    planned_total_g = sum(planned_grams)
+    filament_used_mm = clean_float(
+        print_stats.get("filament_used") or current_print.get("filament_used"),
+        0.0,
+    )
+
+    if planned_total_g > 0 and progress > 0:
+        used_grams = planned_total_g * progress
+        basis = "slicer progress"
+    else:
+        used_grams = filament_mm_to_grams(filament_used_mm, material or "PLA")
+        basis = "extrusion length"
+
+    colors = metadata.get("default_filament_colour")
+    if not isinstance(colors, list):
+        colors = []
+    parts = []
+    for index, grams in enumerate(planned_grams):
+        if grams <= 0:
+            continue
+        parts.append(
+            {
+                "index": index,
+                "planned_g": grams,
+                "material": material,
+                "color_hex": normalize_color(colors[index]) if index < len(colors) and colors[index] else "",
+            }
+        )
+    if not parts:
+        parts = [{"index": 0, "planned_g": max(planned_total_g, 1.0), "material": material, "color_hex": ""}]
+
+    signature = f"{filename}|{start_time}" if filename else ""
+    return {
+        "filename": filename,
+        "signature": signature,
+        "state": state,
+        "progress": progress,
+        "material": material,
+        "planned_total_g": planned_total_g,
+        "used_grams": max(0.0, used_grams),
+        "filament_used_mm": filament_used_mm,
+        "basis": basis,
+        "parts": parts,
+    }
+
+
+def choose_spool_for_part(part: dict, loaded_spools: list[sqlite3.Row], used_ids: set[int]) -> sqlite3.Row | None:
+    candidates = []
+    for spool in loaded_spools:
+        score = 0
+        if material_matches(part.get("material", ""), spool["material"]):
+            score += 100
+        if part.get("color_hex"):
+            distance = color_distance(part["color_hex"], spool["color_hex"])
+            if distance <= 60:
+                score += 80 - distance
+        if spool["id"] in used_ids:
+            score -= 50
+        if score > 0:
+            candidates.append((score, spool))
+    if not candidates and loaded_spools:
+        candidates = [(1 if spool["id"] not in used_ids else 0, spool) for spool in loaded_spools]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sqlite3.Row, int]]:
+    if grams <= 0:
+        return []
+    with connect() as con:
+        loaded_spools = con.execute(
+            """
+            SELECT s.*, l.name AS location_name
+            FROM spools s
+            LEFT JOIN locations l ON l.id = s.location_id
+            WHERE s.status = 'loaded'
+            ORDER BY l.sort_order, s.id
+            """
+        ).fetchall()
+    if not loaded_spools:
+        return []
+
+    parts = snapshot["parts"]
+    total_part_grams = sum(part["planned_g"] for part in parts) or 1.0
+    used_ids = set()
+    allocations_by_id: dict[int, tuple[sqlite3.Row, int]] = {}
+    remaining = grams
+    for index, part in enumerate(parts):
+        spool = choose_spool_for_part(part, loaded_spools, used_ids)
+        if not spool:
+            continue
+        used_ids.add(spool["id"])
+        part_grams = (
+            remaining
+            if index == len(parts) - 1
+            else max(0, round(grams * (part["planned_g"] / total_part_grams)))
+        )
+        remaining -= part_grams
+        existing_spool, existing_grams = allocations_by_id.get(spool["id"], (spool, 0))
+        allocations_by_id[spool["id"]] = (existing_spool, existing_grams + part_grams)
+    return [(spool, amount) for spool, amount in allocations_by_id.values() if amount > 0]
+
+
+def sync_printer_usage(base_url: str, reset: bool = False) -> dict:
+    base_url = normalize_printer_base_url(base_url)
+    with USAGE_MONITOR_LOCK:
+        snapshot = fetch_printer_usage_snapshot(base_url)
+        if not snapshot["signature"]:
+            set_setting("usage_monitor_last_message", "No active or recent print found.")
+            return {"tracked": False, "deducted": 0, "message": "No active or recent print found.", "snapshot": snapshot}
+
+        last_signature = get_setting("usage_monitor_signature")
+        last_used_grams = clean_float(get_setting("usage_monitor_used_grams"), 0.0)
+        residual_grams = clean_float(get_setting("usage_monitor_residual_grams"), 0.0)
+
+        if reset or snapshot["signature"] != last_signature:
+            set_settings(
+                {
+                    "usage_monitor_signature": snapshot["signature"],
+                    "usage_monitor_used_grams": f"{snapshot['used_grams']:.4f}",
+                    "usage_monitor_residual_grams": "0",
+                    "usage_monitor_last_message": f"Baseline set for {snapshot['filename']}.",
+                    "usage_monitor_last_checked": now_iso(),
+                }
+            )
+            return {
+                "tracked": True,
+                "baseline": True,
+                "deducted": 0,
+                "message": f"Baseline set for {snapshot['filename']}.",
+                "snapshot": snapshot,
+            }
+
+        delta_grams = snapshot["used_grams"] - last_used_grams
+        if delta_grams <= 0:
+            set_settings(
+                {
+                    "usage_monitor_used_grams": f"{max(snapshot['used_grams'], last_used_grams):.4f}",
+                    "usage_monitor_last_message": f"No new usage for {snapshot['filename']}.",
+                    "usage_monitor_last_checked": now_iso(),
+                }
+            )
+            return {
+                "tracked": True,
+                "deducted": 0,
+                "message": f"No new usage for {snapshot['filename']}.",
+                "snapshot": snapshot,
+            }
+
+        available_grams = delta_grams + residual_grams
+        whole_grams = int(available_grams)
+        residual_grams = available_grams - whole_grams
+        if whole_grams <= 0:
+            set_settings(
+                {
+                    "usage_monitor_used_grams": f"{snapshot['used_grams']:.4f}",
+                    "usage_monitor_residual_grams": f"{residual_grams:.4f}",
+                    "usage_monitor_last_message": f"Accumulating usage for {snapshot['filename']}.",
+                    "usage_monitor_last_checked": now_iso(),
+                }
+            )
+            return {
+                "tracked": True,
+                "deducted": 0,
+                "pending_grams": residual_grams,
+                "message": f"Accumulating usage for {snapshot['filename']}.",
+                "snapshot": snapshot,
+            }
+
+        allocations = allocate_usage_to_loaded_spools(snapshot, whole_grams)
+        if not allocations:
+            set_setting("usage_monitor_last_message", "No loaded CFS spool found to deduct from.")
+            return {
+                "tracked": False,
+                "deducted": 0,
+                "message": "No loaded CFS spool found to deduct from.",
+                "snapshot": snapshot,
+            }
+
+        created = now_iso()
+        with connect() as con:
+            for spool, grams in allocations:
+                remaining = max(0, spool["remaining_weight_g"] - grams)
+                status = "retired" if remaining == 0 else spool["status"]
+                con.execute(
+                    """
+                    UPDATE spools
+                    SET remaining_weight_g = ?, status = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (remaining, status, created, spool["id"]),
+                )
+                con.execute(
+                    """
+                    INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        spool["id"],
+                        grams,
+                        snapshot["filename"],
+                        f"Auto printer tracking from {snapshot['basis']} while print state was {snapshot['state'] or 'unknown'}.",
+                        created,
+                    ),
+                )
+
+        message = f"Deducted {whole_grams}g from {len(allocations)} loaded spool(s)."
+        set_settings(
+            {
+                "usage_monitor_signature": snapshot["signature"],
+                "usage_monitor_used_grams": f"{snapshot['used_grams']:.4f}",
+                "usage_monitor_residual_grams": f"{residual_grams:.4f}",
+                "usage_monitor_last_message": message,
+                "usage_monitor_last_checked": created,
+            }
+        )
+        return {
+            "tracked": True,
+            "deducted": whole_grams,
+            "allocations": [
+                {
+                    "spool_id": spool["id"],
+                    "spool": f"{spool['brand']} {spool['color_name']}",
+                    "grams": grams,
+                }
+                for spool, grams in allocations
+            ],
+            "pending_grams": residual_grams,
+            "message": message,
+            "snapshot": snapshot,
+        }
+
+
+def usage_monitor_status() -> dict:
+    return {
+        "enabled": get_setting("usage_monitor_enabled") == "1",
+        "last_message": get_setting("usage_monitor_last_message"),
+        "last_checked": get_setting("usage_monitor_last_checked"),
+        "signature": get_setting("usage_monitor_signature"),
+    }
+
+
+def usage_monitor_loop() -> None:
+    while True:
+        try:
+            if get_setting("usage_monitor_enabled") == "1":
+                base_url = get_setting("printer_base_url")
+                if base_url:
+                    sync_printer_usage(base_url)
+        except Exception as exc:
+            set_settings(
+                {
+                    "usage_monitor_last_message": f"Usage tracking failed: {exc}",
+                    "usage_monitor_last_checked": now_iso(),
+                }
+            )
+        time.sleep(USAGE_MONITOR_INTERVAL_SECONDS)
+
+
+def ensure_usage_monitor() -> None:
+    global USAGE_MONITOR_STARTED
+    if USAGE_MONITOR_STARTED:
+        return
+    thread = threading.Thread(target=usage_monitor_loop, daemon=True)
+    thread.start()
+    USAGE_MONITOR_STARTED = True
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_ROOT), **kwargs)
@@ -1024,6 +1438,40 @@ class Handler(SimpleHTTPRequestHandler):
                         **fetch_bootstrap(),
                     }
                 )
+                return
+
+            if parsed.path == "/api/printer/usage/start":
+                data = self.read_json()
+                base_url = normalize_printer_base_url(data.get("base_url", ""))
+                set_settings(
+                    {
+                        "printer_base_url": base_url,
+                        "usage_monitor_enabled": "1",
+                    }
+                )
+                result = sync_printer_usage(base_url, reset=True)
+                ensure_usage_monitor()
+                self.send_json({**result, "monitor": usage_monitor_status(), **fetch_bootstrap()})
+                return
+
+            if parsed.path == "/api/printer/usage/stop":
+                set_settings(
+                    {
+                        "usage_monitor_enabled": "0",
+                        "usage_monitor_last_message": "Usage tracking stopped.",
+                        "usage_monitor_last_checked": now_iso(),
+                    }
+                )
+                self.send_json({"monitor": usage_monitor_status(), **fetch_bootstrap()})
+                return
+
+            if parsed.path == "/api/printer/usage/check":
+                data = self.read_json()
+                base_url = normalize_printer_base_url(
+                    data.get("base_url") or get_setting("printer_base_url")
+                )
+                result = sync_printer_usage(base_url, reset=bool(data.get("reset")))
+                self.send_json({**result, "monitor": usage_monitor_status(), **fetch_bootstrap()})
                 return
 
             if parsed.path == "/api/catalog/import":
@@ -1167,6 +1615,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main() -> None:
     init_db()
+    ensure_usage_monitor()
     server = None
     port = 8765
     for candidate in range(8765, 8776):
