@@ -370,7 +370,7 @@ main > .cfs-panel {
 }
 
 .slot {
-  min-height: 250px;
+  min-height: 216px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -496,9 +496,9 @@ main > .cfs-panel {
 
 .slot .spool-card {
   height: 100%;
-  min-height: 190px;
+  min-height: 154px;
   padding: 14px;
-  grid-template-rows: minmax(84px, auto) auto 1fr auto;
+  grid-template-rows: minmax(78px, auto) auto auto;
 }
 
 .spool-card.compact .spool-main {
@@ -549,6 +549,11 @@ main > .cfs-panel {
   grid-template-columns: 1fr;
 }
 
+.spool-card.compact .card-menu {
+  top: 8px;
+  right: 8px;
+}
+
 .tag-row {
   display: flex;
   flex-wrap: wrap;
@@ -595,8 +600,8 @@ main > .cfs-panel {
 
 .card-menu summary {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 24px;
   place-items: center;
   border-radius: 999px;
   background: #f0eee8;
