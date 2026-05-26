@@ -286,7 +286,7 @@ function spoolIconSvg() {
     <svg class="cfs-spool-icon" viewBox="0 0 82 96" aria-hidden="true" focusable="false">
       <ellipse class="spool-shadow" cx="39" cy="91" rx="29" ry="4" />
       <ellipse class="spool-rear" cx="20" cy="48" rx="20" ry="45" />
-      <path class="spool-filament-body" d="M 20 12 L 58 12 C 64 28 64 68 58 84 L 20 84 C 14 68 14 28 20 12 Z" />
+      <path class="spool-filament-body" d="M 20 12 L 58 12 C 64 28 64 68 58 84 L 20 84 C 8 68 8 28 20 12 Z" />
       ${windings}
       <ellipse class="spool-front-outer" cx="58" cy="48" rx="20" ry="45" />
       <ellipse class="spool-front-face" cx="58" cy="48" rx="15" ry="36" />
