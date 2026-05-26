@@ -19,58 +19,6 @@
     </header>
 
     <main>
-      <section class="metrics" aria-label="Inventory summary">
-        <article>
-          <span class="metric-label">Total</span>
-          <strong id="metricTotal">0</strong>
-        </article>
-        <article>
-          <span class="metric-label">Loaded</span>
-          <strong id="metricLoaded">0</strong>
-        </article>
-        <article>
-          <span class="metric-label">Open</span>
-          <strong id="metricOpen">0</strong>
-        </article>
-        <article>
-          <span class="metric-label">Sealed</span>
-          <strong id="metricSealed">0</strong>
-        </article>
-        <article>
-          <span class="metric-label">Low</span>
-          <strong id="metricLow">0</strong>
-        </article>
-      </section>
-
-      <section class="controls" aria-label="Filters">
-        <label>
-          Search
-          <input id="searchInput" type="search" placeholder="Brand, color, material" />
-        </label>
-        <label>
-          Material
-          <select id="materialFilter">
-            <option value="">All</option>
-          </select>
-        </label>
-        <label>
-          Location
-          <select id="locationFilter">
-            <option value="">All</option>
-          </select>
-        </label>
-        <label>
-          Status
-          <select id="statusFilter">
-            <option value="">All</option>
-            <option value="loaded">Loaded</option>
-            <option value="open">Open</option>
-            <option value="sealed">Sealed</option>
-            <option value="retired">Retired</option>
-          </select>
-        </label>
-      </section>
-
       <section class="split">
         <div class="panel-stack">
           <div class="panel">
@@ -98,6 +46,54 @@
               </div>
             </div>
             <pre id="printerOutput" aria-live="polite"></pre>
+          </section>
+
+          <section class="metrics" aria-label="Inventory summary">
+            <article>
+              <span class="metric-label">Total</span>
+              <strong id="metricTotal">0</strong>
+            </article>
+            <article>
+              <span class="metric-label">Open</span>
+              <strong id="metricOpen">0</strong>
+            </article>
+            <article>
+              <span class="metric-label">Sealed</span>
+              <strong id="metricSealed">0</strong>
+            </article>
+            <article>
+              <span class="metric-label">Low</span>
+              <strong id="metricLow">0</strong>
+            </article>
+          </section>
+
+          <section class="controls" aria-label="Filters">
+            <label>
+              Search
+              <input id="searchInput" type="search" placeholder="Brand, color, material" />
+            </label>
+            <label>
+              Material
+              <select id="materialFilter">
+                <option value="">All</option>
+              </select>
+            </label>
+            <label>
+              Location
+              <select id="locationFilter">
+                <option value="">All</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="statusFilter">
+                <option value="">All</option>
+                <option value="loaded">Loaded</option>
+                <option value="open">Open</option>
+                <option value="sealed">Sealed</option>
+                <option value="retired">Retired</option>
+              </select>
+            </label>
           </section>
         </div>
 
