@@ -300,6 +300,34 @@ function createSpoolCard(spool, compact = false) {
   return card;
 }
 
+function closeCardMenus(exceptMenu = null) {
+  document.querySelectorAll(".card-menu[open]").forEach((menu) => {
+    if (menu !== exceptMenu) {
+      menu.removeAttribute("open");
+    }
+  });
+}
+
+function setupCardMenus() {
+  document.addEventListener(
+    "toggle",
+    (event) => {
+      const menu = event.target;
+      if (menu.matches?.(".card-menu") && menu.open) {
+        closeCardMenus(menu);
+      }
+    },
+    true,
+  );
+
+  document.addEventListener("click", (event) => {
+    const menu = event.target.closest?.(".card-menu");
+    if (!menu || event.target.closest(".card-actions button")) {
+      closeCardMenus();
+    }
+  });
+}
+
 function labelStatus(status) {
   return {
     loaded: "Loaded",
@@ -986,6 +1014,8 @@ els.usageForm.addEventListener("submit", async (event) => {
 fields.status.addEventListener("change", () => {
   fields.location.value = defaultLocationForStatus(fields.status.value);
 });
+
+setupCardMenus();
 
 [
   [els.searchInput, "search"],
