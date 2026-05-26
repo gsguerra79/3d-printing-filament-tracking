@@ -607,10 +607,16 @@ main > .cfs-panel {
   background: #f0eee8;
   color: var(--ink);
   cursor: pointer;
-  font-size: 18px;
-  font-weight: 950;
-  line-height: 1;
   list-style: none;
+}
+
+.card-menu summary::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: -7px 0 0 currentColor, 7px 0 0 currentColor;
 }
 
 .card-menu summary::-webkit-details-marker {
