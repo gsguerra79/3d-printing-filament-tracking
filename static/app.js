@@ -277,21 +277,21 @@ function materialBadge(material) {
 }
 
 function spoolIconSvg() {
-  const windings = Array.from({ length: 18 }, (_item, index) => {
-    const x = 20 + index * 1.75;
-    return `<path class="spool-filament-line" d="M ${x.toFixed(1)} 12 L ${(x - 2.2).toFixed(1)} 84" />`;
+  const windings = Array.from({ length: 16 }, (_item, index) => {
+    const x = 20 + index * 2.35;
+    return `<path class="spool-filament-line" d="M ${x.toFixed(1)} 13 C ${(x - 2.2).toFixed(1)} 31 ${(x - 2.2).toFixed(1)} 65 ${x.toFixed(1)} 83" />`;
   }).join("");
 
   return `
     <svg class="cfs-spool-icon" viewBox="0 0 82 96" aria-hidden="true" focusable="false">
       <ellipse class="spool-shadow" cx="39" cy="91" rx="29" ry="4" />
       <ellipse class="spool-rear" cx="18" cy="48" rx="13" ry="43" />
-      <path class="spool-filament-body" d="M 19 12 L 61 12 L 59 84 L 17 84 Z" />
+      <path class="spool-filament-body" d="M 18 12 L 58 12 C 64 28 64 68 58 84 L 18 84 C 12 68 12 28 18 12 Z" />
       ${windings}
       <ellipse class="spool-front-outer" cx="58" cy="48" rx="20" ry="45" />
       <ellipse class="spool-front-face" cx="58" cy="48" rx="15" ry="36" />
       <path class="spool-edge-highlight" d="M 50 6 C 67 6 78 25 78 48 C 78 71 67 90 50 90" />
-      <path class="spool-side-highlight" d="M 21 14 L 59 14" />
+      <path class="spool-side-highlight" d="M 21 14 L 56 14" />
       <ellipse class="spool-hub-rim" cx="58" cy="48" rx="10" ry="19" />
       <ellipse class="spool-hub" cx="58" cy="48" rx="7" ry="14" />
     </svg>
