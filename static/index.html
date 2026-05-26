@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Filament Inventory</title>
-    <link rel="stylesheet" href="/styles.css?v=ui-refresh-1" />
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="topbar">
@@ -42,7 +42,36 @@
         </article>
       </section>
 
-      <section class="split dashboard-grid">
+      <section class="controls" aria-label="Filters">
+        <label>
+          Search
+          <input id="searchInput" type="search" placeholder="Brand, color, material" />
+        </label>
+        <label>
+          Material
+          <select id="materialFilter">
+            <option value="">All</option>
+          </select>
+        </label>
+        <label>
+          Location
+          <select id="locationFilter">
+            <option value="">All</option>
+          </select>
+        </label>
+        <label>
+          Status
+          <select id="statusFilter">
+            <option value="">All</option>
+            <option value="loaded">Loaded</option>
+            <option value="open">Open</option>
+            <option value="sealed">Sealed</option>
+            <option value="retired">Retired</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="split">
         <div class="panel-stack">
           <div class="panel">
             <div class="section-heading">
@@ -70,50 +99,22 @@
             </div>
             <pre id="printerOutput" aria-live="polite"></pre>
           </section>
-
-          <div class="panel usage-panel">
-            <div class="section-heading">
-              <h2>Recent Usage</h2>
-            </div>
-            <div class="usage-list" id="usageList"></div>
-          </div>
         </div>
 
-        <section class="inventory-section">
+        <div class="panel">
           <div class="section-heading">
-            <h2>Inventory</h2>
-            <span id="inventoryCount">0 spools</span>
+            <h2>Recent Usage</h2>
           </div>
-          <section class="controls" aria-label="Filters">
-            <label>
-              Search
-              <input id="searchInput" type="search" placeholder="Brand, color, material" />
-            </label>
-            <label>
-              Material
-              <select id="materialFilter">
-                <option value="">All</option>
-              </select>
-            </label>
-            <label>
-              Location
-              <select id="locationFilter">
-                <option value="">All</option>
-              </select>
-            </label>
-            <label>
-              Status
-              <select id="statusFilter">
-                <option value="">All</option>
-                <option value="loaded">Loaded</option>
-                <option value="open">Open</option>
-                <option value="sealed">Sealed</option>
-                <option value="retired">Retired</option>
-              </select>
-            </label>
-          </section>
-          <div class="inventory-grid" id="inventoryGrid"></div>
-        </section>
+          <div class="usage-list" id="usageList"></div>
+        </div>
+      </section>
+
+      <section class="inventory-section">
+        <div class="section-heading">
+          <h2>Inventory</h2>
+          <span id="inventoryCount">0 spools</span>
+        </div>
+        <div class="inventory-grid" id="inventoryGrid"></div>
       </section>
     </main>
 
