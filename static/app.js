@@ -276,6 +276,19 @@ function materialBadge(material) {
   return "PLA";
 }
 
+function contrastTextColor(hexColor) {
+  const hex = String(hexColor || "").replace("#", "").trim();
+  const normalized = hex.length === 3
+    ? hex.split("").map((char) => char + char).join("")
+    : hex;
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return "#111111";
+  const red = parseInt(normalized.slice(0, 2), 16);
+  const green = parseInt(normalized.slice(2, 4), 16);
+  const blue = parseInt(normalized.slice(4, 6), 16);
+  const brightness = (red * 299 + green * 587 + blue * 114) / 1000;
+  return brightness > 145 ? "#111111" : "#ffffff";
+}
+
 function spoolIconSvg() {
   return `
     <svg class="cfs-spool-icon" viewBox="0 0 82 96" aria-hidden="true" focusable="false">
@@ -303,6 +316,7 @@ function createSpoolCard(spool, compact = false) {
   swatch.style.background = spool.color_hex;
   swatch.style.setProperty("--spool-color", spool.color_hex);
   swatch.innerHTML = compact ? spoolIconSvg() : `<span class="swatch-label">${materialBadge(spool.material)}</span>`;
+  swatch.querySelector(".swatch-label")?.style.setProperty("color", contrastTextColor(spool.color_hex));
   card.querySelector("h3").textContent = spoolTitle(spool);
   card.querySelector(".spool-meta").textContent = spool.material;
   card.querySelector(".weight-label").textContent = `${spool.remaining_weight_g}g of ${spool.original_weight_g}g (${percent}%)`;
