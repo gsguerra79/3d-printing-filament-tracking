@@ -502,8 +502,9 @@ main > .cfs-panel {
 }
 
 .spool-card.compact .spool-main {
-  grid-template-columns: 58px 1fr;
+  grid-template-columns: 58px minmax(0, 1fr);
   align-items: start;
+  padding-right: 38px;
 }
 
 .spool-card.compact .swatch {
