@@ -6,6 +6,7 @@ import sqlite3
 import csv
 import io
 import math
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -777,7 +778,7 @@ def normalize_color(value) -> str:
 
 def same_filament(left: sqlite3.Row | dict, right: dict) -> bool:
     return (
-        clean_text(left["material"]).upper() == clean_text(right["material"]).upper()
+        material_matches(left["material"], right["material"])
         and clean_text(left["color_hex"]).lower() == clean_text(right["color_hex"]).lower()
     )
 
@@ -878,36 +879,31 @@ def upsert_synced_slots(slots: list[dict]) -> int:
             ).fetchone()
             payload = normalize_spool_payload({**slot, "location_id": location_id, "notes": note})
 
-            if currently_loaded and not same_filament(currently_loaded, payload):
-                con.execute(
-                    """
-                    UPDATE spools
-                    SET status = 'open', location_id = ?, cfs_slot_name = NULL, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (open_storage_id, now_iso(), currently_loaded["id"]),
-                )
-                currently_loaded = None
-
             existing = currently_loaded
             if not existing:
-                existing = con.execute(
+                possible_matches = con.execute(
                     """
                     SELECT * FROM spools
                     WHERE status IN ('sealed', 'open')
-                      AND UPPER(material) = UPPER(?)
                       AND LOWER(color_hex) = LOWER(?)
                     ORDER BY
                       CASE status WHEN 'open' THEN 1 ELSE 2 END,
                       id
-                    LIMIT 1
                     """,
-                    (payload["material"], payload["color_hex"]),
-                ).fetchone()
+                    (payload["color_hex"],),
+                ).fetchall()
+                existing = next(
+                    (spool for spool in possible_matches if material_matches(spool["material"], payload["material"])),
+                    None,
+                )
 
             if existing:
                 remaining_weight = existing["remaining_weight_g"]
                 original_weight = existing["original_weight_g"]
+                material = existing["material"] if currently_loaded else payload["material"]
+                brand = existing["brand"] if currently_loaded else payload["brand"]
+                color_name = existing["color_name"] if currently_loaded else payload["color_name"]
+                color_hex = existing["color_hex"] if currently_loaded else payload["color_hex"]
                 con.execute(
                     """
                     UPDATE spools
@@ -918,10 +914,10 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                     WHERE id = ?
                     """,
                     (
-                        payload["material"],
-                        payload["brand"],
-                        payload["color_name"],
-                        payload["color_hex"],
+                        material,
+                        brand,
+                        color_name,
+                        color_hex,
                         payload["diameter"],
                         original_weight,
                         remaining_weight,
@@ -1025,8 +1021,8 @@ def color_distance(left: str, right: str) -> int:
 
 
 def material_matches(left: str, right: str) -> bool:
-    left = clean_text(left).upper()
-    right = clean_text(right).upper()
+    left = re.sub(r"[^A-Z0-9]+", " ", clean_text(left).upper()).strip()
+    right = re.sub(r"[^A-Z0-9]+", " ", clean_text(right).upper()).strip()
     if not left or not right:
         return False
     return left in right or right in left or left.split()[0] == right.split()[0]
@@ -1070,7 +1066,10 @@ def fetch_printer_usage_snapshot(base_url: str) -> dict:
         or clean_text(current_print.get("filename"))
         or Path(clean_text(virtual_sdcard.get("file_path"))).name
     )
-    state = clean_text(print_stats.get("state") or current_print.get("status"))
+    current_print_status = clean_text(current_print.get("status"))
+    state = current_print_status if current_print_status in {"completed", "cancelled", "error"} else clean_text(
+        print_stats.get("state") or current_print_status
+    )
     start_time = clean_text(current_print.get("start_time") or metadata.get("uuid"))
     material = clean_text(
         metadata.get("filament_type") or model_info.get("MaterialType") or print_stats.get("filament_type")
@@ -1084,7 +1083,10 @@ def fetch_printer_usage_snapshot(base_url: str) -> dict:
         0.0,
     )
 
-    if planned_total_g > 0 and progress > 0:
+    if planned_total_g > 0 and state == "completed":
+        used_grams = planned_total_g
+        basis = "completed slicer estimate"
+    elif planned_total_g > 0 and progress > 0:
         used_grams = planned_total_g * progress
         basis = "slicer progress"
     else:
@@ -1126,10 +1128,12 @@ def fetch_printer_usage_snapshot(base_url: str) -> dict:
 
 def choose_spool_for_part(part: dict, loaded_spools: list[sqlite3.Row], used_ids: set[int]) -> sqlite3.Row | None:
     candidates = []
+    material_candidates = []
     for spool in loaded_spools:
         score = 0
         if material_matches(part.get("material", ""), spool["material"]):
             score += 100
+            material_candidates.append(spool)
         else:
             continue
         if part.get("color_hex"):
@@ -1143,6 +1147,11 @@ def choose_spool_for_part(part: dict, loaded_spools: list[sqlite3.Row], used_ids
         if score > 0:
             candidates.append((score, spool))
     if not candidates:
+        available_material_candidates = [
+            spool for spool in material_candidates if spool["id"] not in used_ids and spool["remaining_weight_g"] > 0
+        ]
+        if len(available_material_candidates) == 1:
+            return available_material_candidates[0]
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1]
@@ -1345,8 +1354,9 @@ def sync_printer_usage(base_url: str, reset: bool = False) -> dict:
 
 
 def usage_monitor_status() -> dict:
+    base_url = get_setting("printer_base_url")
     return {
-        "enabled": get_setting("usage_monitor_enabled") == "1",
+        "enabled": bool(base_url),
         "last_message": get_setting("usage_monitor_last_message"),
         "last_checked": get_setting("usage_monitor_last_checked"),
         "signature": get_setting("usage_monitor_signature"),
@@ -1356,10 +1366,9 @@ def usage_monitor_status() -> dict:
 def usage_monitor_loop() -> None:
     while True:
         try:
-            if get_setting("usage_monitor_enabled") == "1":
-                base_url = get_setting("printer_base_url")
-                if base_url:
-                    sync_printer_usage(base_url)
+            base_url = get_setting("printer_base_url")
+            if base_url:
+                sync_printer_usage(base_url)
         except Exception as exc:
             set_settings(
                 {
@@ -1452,6 +1461,7 @@ class Handler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/printer/sync":
                 data = self.read_json()
                 base_url = normalize_printer_base_url(data.get("base_url", ""))
+                set_setting("printer_base_url", base_url)
                 slots, source = fetch_cfs_slots(base_url)
                 if not slots:
                     self.send_json(
@@ -1655,6 +1665,26 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(fetch_bootstrap())
                 return
         except (json.JSONDecodeError, ValueError, sqlite3.Error) as exc:
+            self.send_json({"error": str(exc)}, 400)
+            return
+        self.send_json({"error": "Not found."}, 404)
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path.startswith("/api/spools/"):
+                spool_id = int(parsed.path.split("/")[3])
+                with connect() as con:
+                    existing_row = con.execute(
+                        "SELECT * FROM spools WHERE id = ?", (spool_id,)
+                    ).fetchone()
+                    if not existing_row:
+                        self.send_json({"error": "Spool not found."}, 404)
+                        return
+                    con.execute("DELETE FROM spools WHERE id = ?", (spool_id,))
+                self.send_json(fetch_bootstrap())
+                return
+        except (ValueError, sqlite3.Error) as exc:
             self.send_json({"error": str(exc)}, 400)
             return
         self.send_json({"error": "Not found."}, 404)

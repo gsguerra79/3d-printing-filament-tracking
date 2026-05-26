@@ -71,34 +71,34 @@
         </label>
       </section>
 
-      <section class="printer-panel" aria-label="Printer sync">
-        <div>
-          <div class="section-heading compact">
-            <h2>K2 Plus CFS Sync</h2>
-            <span id="printerStatus">Not connected</span>
-          </div>
-          <div class="printer-controls">
-            <label>
-              Printer address
-              <input id="printerUrlInput" placeholder="http://192.168.5.237:4408" />
-            </label>
-            <button class="secondary" id="probePrinterButton" type="button">Test</button>
-            <button class="primary" id="syncPrinterButton" type="button">Sync CFS</button>
-            <button class="secondary" id="checkUsageButton" type="button">Check Usage</button>
-            <button class="primary" id="startUsageButton" type="button">Start Tracking</button>
-            <button class="secondary" id="stopUsageButton" type="button">Stop Tracking</button>
-          </div>
-        </div>
-        <pre id="printerOutput" aria-live="polite"></pre>
-      </section>
-
       <section class="split">
-        <div class="panel">
-          <div class="section-heading">
-            <h2>CFS</h2>
-            <span id="cfsCount">0 loaded</span>
+        <div class="panel-stack">
+          <div class="panel">
+            <div class="section-heading">
+              <h2>CFS</h2>
+              <span id="cfsCount">0 loaded</span>
+            </div>
+            <div class="slot-grid" id="cfsGrid"></div>
           </div>
-          <div class="slot-grid" id="cfsGrid"></div>
+
+          <section class="printer-panel" aria-label="Printer sync">
+            <div>
+              <div class="section-heading compact">
+                <h2>K2 Plus CFS Sync</h2>
+                <span id="printerStatus">Not connected</span>
+              </div>
+              <div class="printer-controls">
+                <label>
+                  Printer address
+                  <input id="printerUrlInput" placeholder="http://192.168.5.237:4408" />
+                </label>
+                <button class="secondary" id="probePrinterButton" type="button">Test</button>
+                <button class="primary" id="syncPrinterButton" type="button">Sync CFS</button>
+                <button class="secondary" id="checkUsageButton" type="button">Check Usage</button>
+              </div>
+            </div>
+            <pre id="printerOutput" aria-live="polite"></pre>
+          </section>
         </div>
 
         <div class="panel">
@@ -179,12 +179,12 @@
             <select id="locationInput" name="location_id"></select>
           </label>
           <label>
-            Original grams
-            <input id="originalWeightInput" name="original_weight_g" type="number" min="1" value="1000" />
+            Current remaining grams
+            <input id="remainingWeightInput" name="remaining_weight_g" type="number" min="0" value="1000" />
           </label>
           <label>
-            Remaining grams
-            <input id="remainingWeightInput" name="remaining_weight_g" type="number" min="0" value="1000" />
+            Full spool grams
+            <input id="originalWeightInput" name="original_weight_g" type="number" min="1" value="1000" />
           </label>
           <label>
             Diameter
@@ -257,10 +257,11 @@
           <button type="button" data-action="edit">Edit</button>
           <button type="button" data-action="usage">Use</button>
           <button type="button" data-action="retire">Retire</button>
+          <button class="danger" type="button" data-action="delete">Delete</button>
         </div>
       </article>
     </template>
 
-    <script src="/app.js"></script>
+    <script src="/app.js?v=20260524-delete-spools"></script>
   </body>
 </html>

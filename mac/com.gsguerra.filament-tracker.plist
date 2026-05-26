@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.gsguerra.filament-tracker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3.12</string>
+    <string>/Users/gabriel/Documents/3D Printing Filament Tracking/app.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/gabriel/Documents/3D Printing Filament Tracking</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/gabriel/Documents/3D Printing Filament Tracking/logs/filament-tracker.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/gabriel/Documents/3D Printing Filament Tracking/logs/filament-tracker.err.log</string>
+</dict>
+</plist>

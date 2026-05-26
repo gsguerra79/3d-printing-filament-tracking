@@ -157,9 +157,9 @@ function renderPrinterStatus(message = null) {
     els.printerStatus.textContent = message;
     return;
   }
-  if (state.settings.usage_monitor_enabled === "1") {
+  if (els.printerUrlInput.value) {
     if (!usageTrackingTimer) schedulePageUsageTracking();
-    els.printerStatus.textContent = "Tracking usage";
+    els.printerStatus.textContent = "Auto tracking";
     return;
   }
   if (usageTrackingTimer) {
@@ -279,8 +279,10 @@ function createSpoolCard(spool, compact = false) {
   card.querySelector('[data-action="edit"]').addEventListener("click", () => openSpoolDialog(spool));
   card.querySelector('[data-action="usage"]').addEventListener("click", () => openUsageDialog(spool));
   card.querySelector('[data-action="retire"]').addEventListener("click", () => retireSpool(spool));
+  card.querySelector('[data-action="delete"]').addEventListener("click", () => deleteSpool(spool));
   if (compact) {
     card.querySelector('[data-action="retire"]').remove();
+    card.querySelector('[data-action="delete"]').remove();
   }
   return card;
 }
@@ -310,8 +312,8 @@ function openSpoolDialog(spool = null) {
   fields.colorHex.value = spool?.color_hex || "#333333";
   fields.status.value = spool?.status || "sealed";
   fields.location.value = spool?.location_id || defaultLocationForStatus(fields.status.value);
-  fields.originalWeight.value = spool?.original_weight_g || 1000;
-  fields.remainingWeight.value = spool?.remaining_weight_g || 1000;
+  fields.originalWeight.value = spool?.original_weight_g ?? 1000;
+  fields.remainingWeight.value = spool?.remaining_weight_g ?? 1000;
   fields.diameter.value = spool?.diameter || "1.75mm";
   fields.purchasedAt.value = spool?.purchased_at || "";
   fields.openedAt.value = spool?.opened_at || "";
@@ -337,6 +339,13 @@ async function retireSpool(spool) {
       location_id: retiredLocation?.id || spool.location_id,
     }),
   });
+  await refresh();
+}
+
+async function deleteSpool(spool) {
+  const confirmed = window.confirm(`Delete ${spoolTitle(spool)} from the database? This cannot be undone.`);
+  if (!confirmed) return;
+  await api(`/api/spools/${spool.id}`, { method: "DELETE" });
   await refresh();
 }
 
@@ -632,7 +641,7 @@ async function startUsageTracking() {
     const result = await applyPrinterUsageSnapshot({ reset: true, enable: true });
     schedulePageUsageTracking();
     renderPrinterStatus();
-    showPrinterOutput(`${usageSummary(result)}\nUsage tracking is now on while this page is open.`);
+    showPrinterOutput(`${usageSummary(result)}\nUsage tracking is now automatic while the local tracker is running.`);
     render();
   } catch (error) {
     renderPrinterStatus("Tracking failed");
@@ -910,8 +919,8 @@ els.addSpoolButton.addEventListener("click", () => openSpoolDialog());
 els.probePrinterButton.addEventListener("click", probePrinter);
 els.syncPrinterButton.addEventListener("click", syncPrinter);
 els.checkUsageButton.addEventListener("click", () => checkPrinterUsage(false));
-els.startUsageButton.addEventListener("click", startUsageTracking);
-els.stopUsageButton.addEventListener("click", stopUsageTracking);
+els.startUsageButton?.addEventListener("click", startUsageTracking);
+els.stopUsageButton?.addEventListener("click", stopUsageTracking);
 els.printerUrlInput.addEventListener("input", () => renderPrinterStatus());
 els.scanBarcodeButton.addEventListener("click", startBarcodeScanner);
 els.stopBarcodeButton.addEventListener("click", () => stopBarcodeScanner());

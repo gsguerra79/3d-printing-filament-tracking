@@ -166,7 +166,6 @@ dialog {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.55fr);
   gap: 14px;
-  margin-top: 18px;
   padding: 14px;
 }
 
@@ -315,6 +314,11 @@ textarea {
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
   gap: 18px;
   margin-top: 18px;
+}
+
+.panel-stack {
+  display: grid;
+  gap: 18px;
 }
 
 .panel,
@@ -491,7 +495,7 @@ textarea {
 
 .card-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
 }
 
@@ -506,6 +510,15 @@ textarea {
 
 .card-actions button:hover {
   background: #e3ded4;
+}
+
+.card-actions button.danger {
+  background: #f1dddd;
+  color: var(--danger);
+}
+
+.card-actions button.danger:hover {
+  background: #ead0d0;
 }
 
 .usage-list {
