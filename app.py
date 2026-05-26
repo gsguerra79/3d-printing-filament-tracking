@@ -567,6 +567,8 @@ def normalize_spool_payload(data: dict, existing: dict | None = None) -> dict:
         status = "sealed"
     if location_id and location_is_kind(location_id, "cfs"):
         status = "loaded"
+    elif status == "loaded":
+        status = "open"
 
     opened_at = clean_text(data.get("opened_at", base.get("opened_at") or ""))
     if status in {"open", "loaded"} and not opened_at:
