@@ -1166,7 +1166,8 @@ def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sq
             SELECT s.*, l.name AS location_name
             FROM spools s
             LEFT JOIN locations l ON l.id = s.location_id
-            WHERE s.status = 'loaded'
+            WHERE s.status != 'retired'
+              AND l.kind = 'cfs'
             ORDER BY l.sort_order, s.id
             """
         ).fetchall()
@@ -1297,7 +1298,7 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
         with connect() as con:
             for spool, grams in allocations:
                 remaining = max(0, spool["remaining_weight_g"] - grams)
-                status = spool["status"] if spool["status"] == "loaded" else ("retired" if remaining == 0 else spool["status"])
+                status = "loaded" if remaining > 0 else "retired"
                 con.execute(
                     """
                     UPDATE spools
