@@ -536,6 +536,17 @@ def seed_starter_catalog() -> int:
     return import_catalog(records)
 
 
+def location_is_kind(location_id: int | None, kind: str) -> bool:
+    if not location_id:
+        return False
+    with connect() as con:
+        row = con.execute(
+            "SELECT 1 FROM locations WHERE id = ? AND kind = ?",
+            (location_id, kind),
+        ).fetchone()
+    return row is not None
+
+
 def normalize_spool_payload(data: dict, existing: dict | None = None) -> dict:
     base = existing or {}
     original = clean_int(
@@ -554,6 +565,8 @@ def normalize_spool_payload(data: dict, existing: dict | None = None) -> dict:
     status = clean_text(data.get("status", base.get("status", "sealed")), "sealed")
     if status not in {"sealed", "open", "loaded", "retired"}:
         status = "sealed"
+    if location_id and location_is_kind(location_id, "cfs"):
+        status = "loaded"
 
     opened_at = clean_text(data.get("opened_at", base.get("opened_at") or ""))
     if status in {"open", "loaded"} and not opened_at:
