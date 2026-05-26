@@ -19,29 +19,6 @@
     </header>
 
     <main>
-      <section class="metrics" aria-label="Inventory summary">
-        <article>
-          <span class="metric-label">Total</span>
-          <strong id="metricTotal">0</strong>
-        </article>
-        <article>
-          <span class="metric-label">Loaded</span>
-          <strong id="metricLoaded">0</strong>
-        </article>
-        <article>
-          <span class="metric-label">Open</span>
-          <strong id="metricOpen">0</strong>
-        </article>
-        <article>
-          <span class="metric-label">Sealed</span>
-          <strong id="metricSealed">0</strong>
-        </article>
-        <article>
-          <span class="metric-label">Low</span>
-          <strong id="metricLow">0</strong>
-        </article>
-      </section>
-
       <section class="split dashboard-grid">
         <div class="panel-stack">
           <div class="panel">
@@ -71,19 +48,25 @@
             <pre id="printerOutput" aria-live="polite"></pre>
           </section>
 
-          <div class="panel usage-panel">
-            <div class="section-heading">
-              <h2>Recent Usage</h2>
-            </div>
-            <div class="usage-list" id="usageList"></div>
-          </div>
-        </div>
+          <section class="metrics" aria-label="Inventory summary">
+            <article>
+              <span class="metric-label">Total</span>
+              <strong id="metricTotal">0</strong>
+            </article>
+            <article>
+              <span class="metric-label">Open</span>
+              <strong id="metricOpen">0</strong>
+            </article>
+            <article>
+              <span class="metric-label">Sealed</span>
+              <strong id="metricSealed">0</strong>
+            </article>
+            <article>
+              <span class="metric-label">Low</span>
+              <strong id="metricLow">0</strong>
+            </article>
+          </section>
 
-        <section class="inventory-section">
-          <div class="section-heading">
-            <h2>Inventory</h2>
-            <span id="inventoryCount">0 spools</span>
-          </div>
           <section class="controls" aria-label="Filters">
             <label>
               Search
@@ -112,6 +95,20 @@
               </select>
             </label>
           </section>
+
+          <div class="panel usage-panel">
+            <div class="section-heading">
+              <h2>Recent Usage</h2>
+            </div>
+            <div class="usage-list" id="usageList"></div>
+          </div>
+        </div>
+
+        <section class="inventory-section">
+          <div class="section-heading">
+            <h2>Inventory</h2>
+            <span id="inventoryCount">0 spools</span>
+          </div>
           <div class="inventory-grid" id="inventoryGrid"></div>
         </section>
       </section>
@@ -261,6 +258,6 @@
       </article>
     </template>
 
-    <script src="/app.js?v=20260524-delete-spools"></script>
+    <script src="/app.js?v=ui-refresh-counts-1"></script>
   </body>
 </html>

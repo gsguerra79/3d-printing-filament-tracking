@@ -189,12 +189,10 @@ function renderSelectors() {
 
 function renderMetrics() {
   const active = state.spools.filter((spool) => spool.status !== "retired");
-  const loaded = active.filter((spool) => spool.status === "loaded");
-  const open = active.filter((spool) => spool.status === "open");
+  const open = active.filter((spool) => spool.status === "open" || spool.status === "loaded");
   const sealed = active.filter((spool) => spool.status === "sealed");
-  const low = active.filter((spool) => percentRemaining(spool) <= 20);
+  const low = active.filter((spool) => spool.remaining_weight_g < 200);
   document.querySelector("#metricTotal").textContent = active.length;
-  document.querySelector("#metricLoaded").textContent = loaded.length;
   document.querySelector("#metricOpen").textContent = open.length;
   document.querySelector("#metricSealed").textContent = sealed.length;
   document.querySelector("#metricLow").textContent = low.length;

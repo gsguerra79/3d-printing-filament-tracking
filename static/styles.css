@@ -121,8 +121,12 @@ main {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 10px;
+}
+
+.panel-stack > .metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .metrics article,
@@ -166,6 +170,14 @@ dialog {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-strong);
+}
+
+.panel-stack > .controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.panel-stack > .controls label:first-child {
+  grid-column: 1 / -1;
 }
 
 .printer-panel {
