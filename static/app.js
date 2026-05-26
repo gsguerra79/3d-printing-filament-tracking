@@ -277,32 +277,23 @@ function materialBadge(material) {
 }
 
 function spoolIconSvg() {
-  const windings = Array.from({ length: 17 }, (_item, index) => {
-    const x = 19 + index * 2.4;
-    return `<path class="spool-filament-line" d="M ${x.toFixed(1)} 10.5 C ${(x - 2).toFixed(1)} 25 ${(x - 1.4).toFixed(1)} 46 ${x.toFixed(1)} 61.5" />`;
+  const windings = Array.from({ length: 20 }, (_item, index) => {
+    const x = 24 + index * 2.1;
+    return `<path class="spool-filament-line" d="M ${x.toFixed(1)} 13 C ${(x - 3.2).toFixed(1)} 30 ${(x - 3.2).toFixed(1)} 58 ${x.toFixed(1)} 75" />`;
   }).join("");
 
   return `
-    <svg class="cfs-spool-icon" viewBox="0 0 96 72" aria-hidden="true" focusable="false">
-      <ellipse class="spool-shadow" cx="43" cy="66" rx="34" ry="4" />
-      <ellipse class="spool-rear" cx="24" cy="36" rx="16" ry="31" />
-      <path class="spool-filament-body" d="M 22 8 C 32 7 50 9 66 14 L 66 58 C 50 63 32 65 22 64 C 16 52 16 20 22 8 Z" />
+    <svg class="cfs-spool-icon" viewBox="0 0 118 88" aria-hidden="true" focusable="false">
+      <ellipse class="spool-shadow" cx="54" cy="82" rx="42" ry="5" />
+      <ellipse class="spool-rear" cx="25" cy="44" rx="18" ry="37" />
+      <path class="spool-filament-body" d="M 26 9 C 41 7 66 11 85 18 L 85 70 C 66 77 41 81 26 79 C 17 64 17 24 26 9 Z" />
       ${windings}
-      <ellipse class="spool-front-outer" cx="66" cy="36" rx="23" ry="33" />
-      <ellipse class="spool-front-inner" cx="66" cy="36" rx="17" ry="27" />
-      <path class="spool-window" d="M 56 10 C 60 9 64 9 68 10 L 68 27 C 63 26 59 27 55 29 Z" />
-      <path class="spool-window" d="M 77 17 C 80 21 82 26 83 31 L 72 35 C 71 31 70 28 68 25 Z" />
-      <path class="spool-window" d="M 83 42 C 82 48 80 53 77 57 L 68 47 C 70 44 71 41 72 37 Z" />
-      <path class="spool-window" d="M 67 46 L 67 63 C 62 63 58 62 55 60 L 55 43 C 59 45 63 46 67 46 Z" />
-      <path class="spool-window" d="M 55 28 C 53 31 52 35 52 39 L 43 46 C 41 39 41 32 43 26 Z" />
-      <ellipse class="spool-hub" cx="66" cy="36" rx="9" ry="14" />
-      <path class="spool-rib" d="M 66 9 L 66 24" />
-      <path class="spool-rib" d="M 78 19 L 72 30" />
-      <path class="spool-rib" d="M 78 53 L 72 42" />
-      <path class="spool-rib" d="M 66 48 L 66 63" />
-      <path class="spool-rib" d="M 53 44 L 45 53" />
-      <path class="spool-rib" d="M 53 28 L 45 19" />
-      <ellipse class="spool-highlight" cx="57" cy="17" rx="3" ry="9" />
+      <ellipse class="spool-front-outer" cx="84" cy="44" rx="28" ry="40" />
+      <ellipse class="spool-front-face" cx="84" cy="44" rx="22" ry="33" />
+      <path class="spool-edge-highlight" d="M 71 10 C 96 7 111 24 111 44 C 111 62 98 78 82 83" />
+      <path class="spool-side-highlight" d="M 31 12 C 45 11 67 15 81 20" />
+      <ellipse class="spool-hub-rim" cx="84" cy="44" rx="15" ry="22" />
+      <ellipse class="spool-hub" cx="84" cy="44" rx="11" ry="17" />
     </svg>
   `;
 }

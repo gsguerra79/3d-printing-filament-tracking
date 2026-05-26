@@ -561,20 +561,20 @@ main > .cfs-panel {
 .spool-filament-line {
   fill: none;
   stroke: color-mix(in srgb, var(--spool-color) 70%, #ffffff);
-  stroke-width: 1.15;
-  opacity: 0.88;
+  stroke-width: 1.05;
+  opacity: 0.7;
 }
 
 .spool-front-outer {
-  fill: #27292a;
+  fill: #151617;
   stroke: #0c0d0e;
   stroke-width: 3.8;
 }
 
-.spool-front-inner {
-  fill: #333536;
-  stroke: #141516;
-  stroke-width: 1.8;
+.spool-front-face {
+  fill: #2c2e2f;
+  stroke: #3f4244;
+  stroke-width: 1.2;
 }
 
 .spool-hub {
@@ -583,23 +583,18 @@ main > .cfs-panel {
   stroke-width: 2.4;
 }
 
-.spool-window {
+.spool-hub-rim {
+  fill: #202223;
   stroke: #111213;
-  stroke-width: 3;
+  stroke-width: 2.2;
 }
 
-.spool-rib {
+.spool-edge-highlight,
+.spool-side-highlight {
   fill: none;
-  stroke: #111213;
-  stroke-width: 3.4;
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 1.8;
   stroke-linecap: round;
-}
-
-.spool-highlight {
-  fill: color-mix(in srgb, var(--spool-color) 70%, #ffffff);
-  opacity: 0.72;
-  transform: rotate(18deg);
-  transform-origin: 57px 17px;
 }
 
 .spool-card.compact .tag-row {
