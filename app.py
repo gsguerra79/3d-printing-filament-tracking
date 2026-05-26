@@ -1198,15 +1198,28 @@ def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sq
     ]
 
 
+def active_usage_spool_ids(snapshot: dict) -> str:
+    if snapshot.get("state") in {"completed", "cancelled", "error"}:
+        return ""
+    allocations = allocate_usage_to_loaded_spools(snapshot, 1)
+    return ",".join(str(spool["id"]) for spool, _grams in allocations)
+
+
 def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
     with USAGE_MONITOR_LOCK:
         if not snapshot["signature"]:
-            set_setting("usage_monitor_last_message", "No active or recent print found.")
+            set_settings(
+                {
+                    "usage_monitor_last_message": "No active or recent print found.",
+                    "usage_monitor_active_spool_ids": "",
+                }
+            )
             return {"tracked": False, "deducted": 0, "message": "No active or recent print found.", "snapshot": snapshot}
 
         last_signature = get_setting("usage_monitor_signature")
         last_used_grams = clean_float(get_setting("usage_monitor_used_grams"), 0.0)
         residual_grams = clean_float(get_setting("usage_monitor_residual_grams"), 0.0)
+        active_spool_ids = active_usage_spool_ids(snapshot)
 
         if reset or snapshot["signature"] != last_signature:
             set_settings(
@@ -1216,6 +1229,7 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                     "usage_monitor_residual_grams": "0",
                     "usage_monitor_last_message": f"Baseline set for {snapshot['filename']}.",
                     "usage_monitor_last_checked": now_iso(),
+                    "usage_monitor_active_spool_ids": active_spool_ids,
                 }
             )
             return {
@@ -1233,6 +1247,7 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                     "usage_monitor_used_grams": f"{max(snapshot['used_grams'], last_used_grams):.4f}",
                     "usage_monitor_last_message": f"No new usage for {snapshot['filename']}.",
                     "usage_monitor_last_checked": now_iso(),
+                    "usage_monitor_active_spool_ids": active_spool_ids,
                 }
             )
             return {
@@ -1252,6 +1267,7 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                     "usage_monitor_residual_grams": f"{residual_grams:.4f}",
                     "usage_monitor_last_message": f"Accumulating usage for {snapshot['filename']}.",
                     "usage_monitor_last_checked": now_iso(),
+                    "usage_monitor_active_spool_ids": active_spool_ids,
                 }
             )
             return {
@@ -1264,7 +1280,12 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
 
         allocations = allocate_usage_to_loaded_spools(snapshot, whole_grams)
         if not allocations:
-            set_setting("usage_monitor_last_message", "No loaded CFS spool found to deduct from.")
+            set_settings(
+                {
+                    "usage_monitor_last_message": "No loaded CFS spool found to deduct from.",
+                    "usage_monitor_active_spool_ids": active_spool_ids,
+                }
+            )
             return {
                 "tracked": False,
                 "deducted": 0,
@@ -1328,6 +1349,7 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                 "usage_monitor_residual_grams": f"{residual_grams:.4f}",
                 "usage_monitor_last_message": message,
                 "usage_monitor_last_checked": created,
+                "usage_monitor_active_spool_ids": ",".join(str(spool["id"]) for spool, _grams in allocations),
             }
         )
         return {

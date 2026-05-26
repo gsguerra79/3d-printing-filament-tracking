@@ -201,6 +201,12 @@ function renderMetrics() {
 function renderCfs() {
   const cfsLocations = state.locations.filter((location) => location.kind === "cfs");
   const loaded = state.spools.filter((spool) => spool.status === "loaded");
+  const activeSpoolIds = new Set(
+    String(state.settings.usage_monitor_active_spool_ids || "")
+      .split(",")
+      .filter(Boolean)
+      .map(Number),
+  );
   els.cfsCount.textContent = `${loaded.length} loaded`;
   els.cfsGrid.innerHTML = "";
   cfsLocations.forEach((location) => {
@@ -209,7 +215,14 @@ function renderCfs() {
     const spool = state.spools.find(
       (candidate) => candidate.location_id === location.id && candidate.status !== "retired"
     );
-    slot.innerHTML = `<p class="slot-name">${escapeHtml(location.name)}</p>`;
+    const isActive = spool && activeSpoolIds.has(spool.id);
+    slot.classList.toggle("active-slot", Boolean(isActive));
+    slot.innerHTML = `
+      <p class="slot-name">
+        <span>${escapeHtml(location.name)}</span>
+        ${isActive ? `<span class="slot-active-flag">In use</span>` : ""}
+      </p>
+    `;
     if (spool) {
       slot.appendChild(createSpoolCard(spool, true));
     } else {
