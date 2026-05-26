@@ -249,15 +249,18 @@
           <span class="bar"><span></span></span>
         </div>
         <div class="tag-row"></div>
-        <div class="card-actions">
-          <button type="button" data-action="edit">Edit</button>
-          <button type="button" data-action="usage">Use</button>
-          <button type="button" data-action="retire">Retire</button>
-          <button class="danger" type="button" data-action="delete">Delete</button>
-        </div>
+        <details class="card-menu">
+          <summary aria-label="Spool actions">...</summary>
+          <div class="card-actions">
+            <button type="button" data-action="edit">Edit</button>
+            <button type="button" data-action="usage">Use</button>
+            <button type="button" data-action="retire">Retire</button>
+            <button class="danger" type="button" data-action="delete">Delete</button>
+          </div>
+        </details>
       </article>
     </template>
 
-    <script src="/app.js?v=20260524-delete-spools"></script>
+    <script src="/app.js?v=ui-inventory-menu-1"></script>
   </body>
 </html>

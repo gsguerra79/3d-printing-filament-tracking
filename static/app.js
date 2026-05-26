@@ -255,6 +255,14 @@ function renderInventory() {
   spools.forEach((spool) => els.inventoryGrid.appendChild(createSpoolCard(spool)));
 }
 
+function materialBadge(material) {
+  const text = String(material || "").toUpperCase();
+  if (text.includes("TPU")) return "TPU";
+  if (text.includes("PETG")) return "PETG";
+  if (text.includes("ABS") || text.includes("ASA")) return "ABS";
+  return "PLA";
+}
+
 function createSpoolCard(spool, compact = false) {
   const template = document.querySelector("#spoolCardTemplate");
   const card = template.content.firstElementChild.cloneNode(true);
@@ -265,8 +273,9 @@ function createSpoolCard(spool, compact = false) {
   const swatch = card.querySelector(".swatch");
   swatch.style.background = spool.color_hex;
   swatch.style.setProperty("--spool-color", spool.color_hex);
+  swatch.innerHTML = `<span class="swatch-label">${materialBadge(spool.material)}</span>`;
   card.querySelector("h3").textContent = spoolTitle(spool);
-  card.querySelector(".spool-meta").textContent = `${spool.material} / ${spool.diameter}`;
+  card.querySelector(".spool-meta").textContent = spool.material;
   card.querySelector(".weight-label").textContent = `${spool.remaining_weight_g}g of ${spool.original_weight_g}g (${percent}%)`;
   card.querySelector(".bar span").style.width = `${percent}%`;
 
@@ -276,7 +285,6 @@ function createSpoolCard(spool, compact = false) {
       `<span class="tag ${spool.status}">${labelStatus(spool.status)}</span>`,
       `<span class="tag">${escapeHtml(spool.location_name || "No location")}</span>`,
     ];
-    if (spool.opened_at) tags.push(`<span class="tag">Opened ${escapeHtml(spool.opened_at)}</span>`);
   }
   card.querySelector(".tag-row").innerHTML = tags.join("");
 
