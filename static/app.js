@@ -277,17 +277,11 @@ function materialBadge(material) {
 }
 
 function spoolIconSvg() {
-  const windings = Array.from({ length: 16 }, (_item, index) => {
-    const x = 20 + index * 2.35;
-    return `<path class="spool-filament-line" d="M ${x.toFixed(1)} 13 C ${(x - 2.2).toFixed(1)} 31 ${(x - 2.2).toFixed(1)} 65 ${x.toFixed(1)} 83" />`;
-  }).join("");
-
   return `
     <svg class="cfs-spool-icon" viewBox="0 0 82 96" aria-hidden="true" focusable="false">
       <ellipse class="spool-shadow" cx="39" cy="91" rx="29" ry="4" />
       <ellipse class="spool-rear" cx="20" cy="48" rx="20" ry="45" />
       <path class="spool-filament-body" d="M 20 12 L 58 12 C 64 28 64 68 58 84 L 20 84 C 8 68 8 28 20 12 Z" />
-      ${windings}
       <ellipse class="spool-front-outer" cx="58" cy="48" rx="20" ry="45" />
       <ellipse class="spool-front-face" cx="58" cy="48" rx="15" ry="36" />
       <path class="spool-edge-highlight" d="M 50 6 C 67 6 78 25 78 48 C 78 71 67 90 50 90" />
