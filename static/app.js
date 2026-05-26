@@ -260,18 +260,24 @@ function createSpoolCard(spool, compact = false) {
   const card = template.content.firstElementChild.cloneNode(true);
   const percent = percentRemaining(spool);
   card.dataset.id = spool.id;
+  card.classList.toggle("compact", compact);
   card.classList.toggle("low", percent <= 20);
-  card.querySelector(".swatch").style.background = spool.color_hex;
+  const swatch = card.querySelector(".swatch");
+  swatch.style.background = spool.color_hex;
+  swatch.style.setProperty("--spool-color", spool.color_hex);
   card.querySelector("h3").textContent = spoolTitle(spool);
   card.querySelector(".spool-meta").textContent = `${spool.material} / ${spool.diameter}`;
   card.querySelector(".weight-label").textContent = `${spool.remaining_weight_g}g of ${spool.original_weight_g}g (${percent}%)`;
   card.querySelector(".bar span").style.width = `${percent}%`;
 
-  const tags = [
-    `<span class="tag ${spool.status}">${labelStatus(spool.status)}</span>`,
-    `<span class="tag">${escapeHtml(spool.location_name || "No location")}</span>`,
-  ];
-  if (spool.opened_at) tags.push(`<span class="tag">Opened ${escapeHtml(spool.opened_at)}</span>`);
+  let tags = [];
+  if (!compact) {
+    tags = [
+      `<span class="tag ${spool.status}">${labelStatus(spool.status)}</span>`,
+      `<span class="tag">${escapeHtml(spool.location_name || "No location")}</span>`,
+    ];
+    if (spool.opened_at) tags.push(`<span class="tag">Opened ${escapeHtml(spool.opened_at)}</span>`);
+  }
   card.querySelector(".tag-row").innerHTML = tags.join("");
 
   card.querySelector('[data-action="edit"]').addEventListener("click", () => openSpoolDialog(spool));
@@ -279,6 +285,7 @@ function createSpoolCard(spool, compact = false) {
   card.querySelector('[data-action="retire"]').addEventListener("click", () => retireSpool(spool));
   card.querySelector('[data-action="delete"]').addEventListener("click", () => deleteSpool(spool));
   if (compact) {
+    card.querySelector('[data-action="usage"]').remove();
     card.querySelector('[data-action="retire"]').remove();
     card.querySelector('[data-action="delete"]').remove();
   }
