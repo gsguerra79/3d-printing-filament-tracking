@@ -73,6 +73,7 @@ let barcodeStream = null;
 let barcodeDetector = null;
 let barcodeScanTimer = null;
 let barcodeScanAttempts = 0;
+const barcodeCanvas = document.createElement("canvas");
 let usageTrackingTimer = null;
 
 const materialDensities = {
@@ -466,6 +467,16 @@ function payloadFromSpoolForm() {
 
 function setBarcodeStatus(message) {
   els.barcodeStatus.textContent = message;
+}
+
+async function barcodePermissionState() {
+  if (!navigator.permissions?.query) return "unknown";
+  try {
+    const result = await navigator.permissions.query({ name: "camera" });
+    return result.state || "unknown";
+  } catch (error) {
+    return "unknown";
+  }
 }
 
 function escapeHtml(value) {
@@ -949,7 +960,14 @@ async function scanVideoFrame() {
     return;
   }
   try {
-    const codes = await barcodeDetector.detect(els.barcodeVideo);
+    const width = els.barcodeVideo.videoWidth;
+    const height = els.barcodeVideo.videoHeight;
+    if (width && height) {
+      barcodeCanvas.width = width;
+      barcodeCanvas.height = height;
+      barcodeCanvas.getContext("2d", { willReadFrequently: true }).drawImage(els.barcodeVideo, 0, 0, width, height);
+    }
+    const codes = await barcodeDetector.detect(width && height ? barcodeCanvas : els.barcodeVideo);
     if (codes.length) {
       const value = codes[0].rawValue;
       stopBarcodeScanner();
@@ -971,32 +989,35 @@ async function scanVideoFrame() {
 }
 
 async function startBarcodeScanner() {
-  if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
-    setBarcodeStatus("Camera barcode scanning is not available in this browser.");
+  setBarcodeStatus("Scanner button clicked. Checking browser camera support...");
+  const permission = await barcodePermissionState();
+  const hasDetector = "BarcodeDetector" in window;
+  const hasCamera = Boolean(navigator.mediaDevices?.getUserMedia);
+  if (permission === "denied") {
     els.barcodeScanner.hidden = false;
+    setBarcodeStatus("Camera permission is blocked for this site. Allow camera access for 127.0.0.1 in Arc, then reload.");
+    return;
+  }
+  if (!hasDetector || !hasCamera) {
+    els.barcodeScanner.hidden = false;
+    setBarcodeStatus(`Scanner unavailable in this browser. BarcodeDetector: ${hasDetector ? "yes" : "no"}; camera: ${hasCamera ? "yes" : "no"}; permission: ${permission}.`);
     return;
   }
   stopBarcodeScanner();
   els.barcodeScanner.hidden = false;
-  setBarcodeStatus("Starting camera...");
+  setBarcodeStatus(`Starting camera... permission: ${permission}.`);
   try {
-    const preferredFormats = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code"];
     const supportedFormats = BarcodeDetector.getSupportedFormats
       ? await BarcodeDetector.getSupportedFormats()
-      : preferredFormats;
-    const formats = preferredFormats.filter((format) => supportedFormats.includes(format));
-    if (!formats.length) {
-      setBarcodeStatus("This browser camera can open, but it does not support box barcode formats.");
-      return;
-    }
-    barcodeDetector = new BarcodeDetector({
-      formats,
-    });
+      : ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code"];
+    barcodeDetector = supportedFormats.length
+      ? new BarcodeDetector({ formats: supportedFormats })
+      : new BarcodeDetector();
     barcodeStream = await navigator.mediaDevices.getUserMedia({
       video: {
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        facingMode: "environment",
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
       },
       audio: false,
     });
@@ -1006,7 +1027,8 @@ async function startBarcodeScanner() {
     setBarcodeStatus("Point the camera at the box barcode");
     scanVideoFrame();
   } catch (error) {
-    setBarcodeStatus(`Could not start barcode scanning: ${error.message || "check browser camera permission."}`);
+    const name = error.name ? `${error.name}: ` : "";
+    setBarcodeStatus(`Could not start barcode scanning: ${name}${error.message || "check browser camera permission."}`);
     stopBarcodeScanner(false);
   }
 }
