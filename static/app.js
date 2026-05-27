@@ -72,6 +72,7 @@ const fields = {
 let barcodeStream = null;
 let barcodeDetector = null;
 let barcodeScanTimer = null;
+let barcodeScanAttempts = 0;
 let usageTrackingTimer = null;
 
 const materialDensities = {
@@ -943,6 +944,10 @@ async function lookupBarcode(code) {
 
 async function scanVideoFrame() {
   if (!barcodeDetector || !barcodeStream) return;
+  if (els.barcodeVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+    barcodeScanTimer = window.setTimeout(scanVideoFrame, 120);
+    return;
+  }
   try {
     const codes = await barcodeDetector.detect(els.barcodeVideo);
     if (codes.length) {
@@ -951,8 +956,16 @@ async function scanVideoFrame() {
       await lookupBarcode(value);
       return;
     }
+    barcodeScanAttempts += 1;
+    if (barcodeScanAttempts === 40) {
+      setBarcodeStatus("Still scanning. Hold the barcode flat, fill the camera view, and improve lighting.");
+    }
     barcodeScanTimer = window.setTimeout(scanVideoFrame, 180);
   } catch (error) {
+    barcodeScanAttempts += 1;
+    if (barcodeScanAttempts === 3) {
+      setBarcodeStatus("Camera is open, but barcode detection is having trouble. Try better lighting or type the code.");
+    }
     barcodeScanTimer = window.setTimeout(scanVideoFrame, 350);
   }
 }
@@ -967,19 +980,33 @@ async function startBarcodeScanner() {
   els.barcodeScanner.hidden = false;
   setBarcodeStatus("Starting camera...");
   try {
+    const preferredFormats = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code"];
+    const supportedFormats = BarcodeDetector.getSupportedFormats
+      ? await BarcodeDetector.getSupportedFormats()
+      : preferredFormats;
+    const formats = preferredFormats.filter((format) => supportedFormats.includes(format));
+    if (!formats.length) {
+      setBarcodeStatus("This browser camera can open, but it does not support box barcode formats.");
+      return;
+    }
     barcodeDetector = new BarcodeDetector({
-      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code"],
+      formats,
     });
     barcodeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" },
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
       audio: false,
     });
     els.barcodeVideo.srcObject = barcodeStream;
     await els.barcodeVideo.play();
+    barcodeScanAttempts = 0;
     setBarcodeStatus("Point the camera at the box barcode");
     scanVideoFrame();
   } catch (error) {
-    setBarcodeStatus("Could not start the camera. Check browser camera permission.");
+    setBarcodeStatus(`Could not start barcode scanning: ${error.message || "check browser camera permission."}`);
     stopBarcodeScanner(false);
   }
 }
@@ -993,6 +1020,7 @@ function stopBarcodeScanner(hide = true) {
     barcodeStream.getTracks().forEach((track) => track.stop());
     barcodeStream = null;
   }
+  barcodeScanAttempts = 0;
   els.barcodeVideo.srcObject = null;
   if (hide) {
     els.barcodeScanner.hidden = true;
