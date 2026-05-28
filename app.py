@@ -1036,11 +1036,15 @@ def color_distance(left: str, right: str) -> int:
 
 
 def material_matches(left: str, right: str) -> bool:
-    left = re.sub(r"[^A-Z0-9]+", " ", clean_text(left).upper()).strip()
-    right = re.sub(r"[^A-Z0-9]+", " ", clean_text(right).upper()).strip()
+    left = normalize_material_label(left)
+    right = normalize_material_label(right)
     if not left or not right:
         return False
     return left in right or right in left or left.split()[0] == right.split()[0]
+
+
+def normalize_material_label(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", " ", clean_text(value).upper()).strip()
 
 
 def printer_usage_payload(base_url: str) -> dict:
@@ -1144,19 +1148,23 @@ def fetch_printer_usage_snapshot(base_url: str) -> dict:
 def choose_spool_for_part(part: dict, loaded_spools: list[sqlite3.Row], used_ids: set[int]) -> sqlite3.Row | None:
     candidates = []
     material_candidates = []
+    part_material = normalize_material_label(part.get("material", ""))
     for spool in loaded_spools:
         score = 0
-        if material_matches(part.get("material", ""), spool["material"]):
+        spool_material = normalize_material_label(spool["material"])
+        if material_matches(part_material, spool_material):
             score += 100
+            if part_material == spool_material:
+                score += 100
             material_candidates.append(spool)
         else:
             continue
         if part.get("color_hex"):
             distance = color_distance(part["color_hex"], spool["color_hex"])
-            if distance <= 60:
+            if distance <= 90:
                 score += 80 - distance
             else:
-                continue
+                score -= min(40, distance // 8)
         if spool["id"] in used_ids:
             score -= 50
         if score > 0:
