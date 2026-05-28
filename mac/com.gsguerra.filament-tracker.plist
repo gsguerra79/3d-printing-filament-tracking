@@ -25,9 +25,9 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/gabriel/Documents/3D Printing Filament Tracking/logs/filament-tracker.out.log</string>
+  <string>/Users/gabriel/Library/Logs/FilamentTracker/filament-tracker.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/gabriel/Documents/3D Printing Filament Tracking/logs/filament-tracker.err.log</string>
+  <string>/Users/gabriel/Library/Logs/FilamentTracker/filament-tracker.err.log</string>
 </dict>
 </plist>
