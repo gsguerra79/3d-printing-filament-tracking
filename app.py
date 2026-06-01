@@ -1155,16 +1155,16 @@ def choose_spool_for_part(part: dict, loaded_spools: list[sqlite3.Row], used_ids
         if material_matches(part_material, spool_material):
             score += 100
             if part_material == spool_material:
-                score += 100
+                score += 40
             material_candidates.append(spool)
         else:
             continue
         if part.get("color_hex"):
             distance = color_distance(part["color_hex"], spool["color_hex"])
-            if distance <= 90:
-                score += 80 - distance
+            if distance <= 120:
+                score += max(0, 180 - distance)
             else:
-                score -= min(40, distance // 8)
+                score -= min(140, distance // 3)
         if spool["id"] in used_ids:
             score -= 50
         if score > 0:
