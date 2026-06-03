@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import concurrent.futures
+import ipaddress
 import json
 import sqlite3
 import csv
@@ -655,6 +657,48 @@ def printer_get(base_url: str, path: str) -> dict:
         raise ValueError("Could not reach printer before the request timed out.") from exc
     except json.JSONDecodeError as exc:
         raise ValueError("Printer answered, but not with JSON data.") from exc
+
+
+def printer_api_looks_valid(payload: dict) -> bool:
+    result = moonraker_result(payload)
+    objects = result.get("objects", result if isinstance(result, list) else [])
+    if not isinstance(objects, list):
+        return False
+    required = {"print_stats", "virtual_sdcard", "box"}
+    return len(required.intersection(objects)) >= 2
+
+
+def find_printer_replacement(base_url: str) -> str | None:
+    parsed = urlparse(base_url)
+    host = parsed.hostname or ""
+    port = parsed.port or 4408
+    try:
+        network = ipaddress.ip_network(f"{host}/24", strict=False)
+    except ValueError:
+        return None
+
+    candidates = [str(ip) for ip in network.hosts() if str(ip) != host]
+
+    def probe(ip: str) -> str | None:
+        candidate = f"{parsed.scheme or 'http'}://{ip}:{port}"
+        request = Request(
+            candidate + "/printer/objects/list",
+            headers={"Accept": "application/json", "User-Agent": "FilamentInventory/1.0"},
+        )
+        try:
+            with urlopen(request, timeout=0.45) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if printer_api_looks_valid(payload):
+                return candidate
+        except (OSError, TimeoutError, URLError, json.JSONDecodeError):
+            return None
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=48) as executor:
+        for replacement in executor.map(probe, candidates):
+            if replacement:
+                return replacement
+    return None
 
 
 def moonraker_result(payload: dict):
@@ -1395,7 +1439,18 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
 
 def sync_printer_usage(base_url: str, reset: bool = False) -> dict:
     base_url = normalize_printer_base_url(base_url)
-    snapshot = fetch_printer_usage_snapshot(base_url)
+    try:
+        snapshot = fetch_printer_usage_snapshot(base_url)
+    except ValueError as exc:
+        replacement = find_printer_replacement(base_url)
+        if not replacement:
+            raise
+        set_setting("printer_base_url", replacement)
+        snapshot = fetch_printer_usage_snapshot(replacement)
+        set_setting(
+            "usage_monitor_last_message",
+            f"Printer moved from {base_url} to {replacement}; tracking resumed.",
+        )
     return apply_printer_usage_snapshot(snapshot, reset)
 
 
