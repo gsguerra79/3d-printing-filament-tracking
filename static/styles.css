@@ -167,7 +167,7 @@ dialog {
 
 .printer-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.55fr);
+  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
   gap: 14px;
   padding: 14px;
   align-items: stretch;
@@ -278,13 +278,17 @@ dialog {
 
 .printer-controls {
   display: grid;
-  grid-template-columns: repeat(2, minmax(120px, auto));
+  grid-template-columns: 1fr;
   gap: 10px;
   align-items: end;
-  justify-content: start;
+}
+
+.printer-controls button {
+  width: 100%;
 }
 
 #printerOutput {
+  min-width: 0;
   height: 100%;
   min-height: 74px;
   max-height: none;
