@@ -23,6 +23,8 @@ const els = {
   usageForm: document.querySelector("#usageForm"),
   usageSpoolName: document.querySelector("#usageSpoolName"),
   cfsGrid: document.querySelector("#cfsGrid"),
+  externalHolderGrid: document.querySelector("#externalHolderGrid"),
+  externalHolderCount: document.querySelector("#externalHolderCount"),
   usageList: document.querySelector("#usageList"),
   inventoryGrid: document.querySelector("#inventoryGrid"),
   inventoryCount: document.querySelector("#inventoryCount"),
@@ -149,6 +151,7 @@ function render() {
   renderSelectors();
   renderMetrics();
   renderCfs();
+  renderExternalHolder();
   renderUsage();
   renderInventory();
   renderPrinterStatus();
@@ -201,8 +204,11 @@ function renderMetrics() {
 }
 
 function renderCfs() {
-  const cfsLocations = state.locations.filter((location) => location.kind === "cfs");
-  const loaded = state.spools.filter((spool) => spool.status === "loaded");
+  const cfsLocations = state.locations.filter((location) => /^CFS Slot \d+$/.test(location.name));
+  const cfsLocationIds = new Set(cfsLocations.map((location) => location.id));
+  const loaded = state.spools.filter(
+    (spool) => spool.status === "loaded" && cfsLocationIds.has(spool.location_id),
+  );
   const activeSpoolIds = new Set(
     String(state.settings.usage_monitor_active_spool_ids || "")
       .split(",")
@@ -232,6 +238,38 @@ function renderCfs() {
     }
     els.cfsGrid.appendChild(slot);
   });
+}
+
+function renderExternalHolder() {
+  if (!els.externalHolderGrid) return;
+  const location = state.locations.find((candidate) => candidate.name === "External Spool Holder");
+  const spool = location
+    ? state.spools.find((candidate) => candidate.location_id === location.id && candidate.status !== "retired")
+    : null;
+  const activeSpoolIds = new Set(
+    String(state.settings.usage_monitor_active_spool_ids || "")
+      .split(",")
+      .filter(Boolean)
+      .map(Number),
+  );
+  const isActive = spool && activeSpoolIds.has(spool.id);
+  els.externalHolderCount.textContent = spool ? "1 loaded" : "Empty";
+  els.externalHolderGrid.innerHTML = "";
+  const slot = document.createElement("article");
+  slot.className = "slot external-holder";
+  slot.classList.toggle("active-slot", Boolean(isActive));
+  slot.innerHTML = `
+    <p class="slot-name">
+      <span>External Spool</span>
+      ${isActive ? `<span class="slot-active-flag">In use</span>` : ""}
+    </p>
+  `;
+  if (spool) {
+    slot.appendChild(createSpoolCard(spool, true));
+  } else {
+    slot.innerHTML += `<div class="empty-slot">Empty</div>`;
+  }
+  els.externalHolderGrid.appendChild(slot);
 }
 
 function renderUsage() {
@@ -1050,7 +1088,7 @@ function stopBarcodeScanner(hide = true) {
 }
 
 els.addSpoolButton.addEventListener("click", () => openSpoolDialog());
-els.probePrinterButton.addEventListener("click", probePrinter);
+els.probePrinterButton?.addEventListener("click", probePrinter);
 els.syncPrinterButton.addEventListener("click", syncPrinter);
 els.checkUsageButton.addEventListener("click", () => checkPrinterUsage(false));
 els.startUsageButton?.addEventListener("click", startUsageTracking);

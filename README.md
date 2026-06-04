@@ -18,10 +18,10 @@ If you are setting this up on another Mac, update these items:
 
 - Track material, brand, color, original weight, and remaining weight.
 - Track status: loaded, open, sealed, retired.
-- Track locations: CFS Slot 1-4, dehumidifier, open storage, sealed stock.
+- Track locations: CFS Slot 1-4, external spool holder, dehumidifier, open storage, sealed stock.
 - Sync loaded CFS slots from the K2 Plus printer dashboard.
-- Automatically deduct filament usage from loaded CFS spools while prints run.
-- Keep individual spools unique when moving between sealed stock, open storage, dehumidifier, and CFS.
+- Automatically deduct filament usage from loaded CFS or external holder spools while prints run.
+- Keep individual spools unique when moving between sealed stock, open storage, dehumidifier, CFS, and the external holder.
 - Search/filter inventory and manage spools from a local browser UI.
 - Delete accidentally created spools.
 

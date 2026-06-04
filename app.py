@@ -158,6 +158,7 @@ def init_db() -> None:
             ("CFS Slot 2", "cfs", 20),
             ("CFS Slot 3", "cfs", 30),
             ("CFS Slot 4", "cfs", 40),
+            ("External Spool Holder", "cfs", 45),
             ("Dehumidifier", "dryer", 50),
             ("Open Storage", "storage", 60),
             ("Sealed Stock", "storage", 70),
@@ -914,7 +915,11 @@ def fetch_cfs_slots(base_url: str) -> tuple[list[dict], dict]:
 def upsert_synced_slots(slots: list[dict]) -> int:
     with connect() as con:
         cfs_locations = con.execute(
-            "SELECT * FROM locations WHERE kind = 'cfs' ORDER BY sort_order, name"
+            """
+            SELECT * FROM locations
+            WHERE kind = 'cfs' AND name LIKE 'CFS Slot %'
+            ORDER BY sort_order, name
+            """
         ).fetchall()
         open_storage = con.execute(
             "SELECT id FROM locations WHERE name = 'Open Storage' LIMIT 1"
@@ -1025,7 +1030,8 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                 SET status = 'open', location_id = ?, cfs_slot_name = NULL, updated_at = ?
                 WHERE status = 'loaded'
                   AND location_id IN (
-                    SELECT id FROM locations WHERE kind = 'cfs'
+                    SELECT id FROM locations
+                    WHERE kind = 'cfs' AND name LIKE 'CFS Slot %'
                   )
                   AND location_id NOT IN ({placeholders})
                 """,
