@@ -1100,7 +1100,7 @@ def normalize_material_label(value: str) -> str:
 def printer_usage_payload(base_url: str) -> dict:
     try:
         payload = moonraker_result(
-            printer_get(base_url, "/printer/objects/query?print_stats&virtual_sdcard")
+            printer_get(base_url, "/printer/objects/query?box&print_stats&virtual_sdcard")
         )
         status = payload.get("status", payload)
         if isinstance(status, dict) and ("print_stats" in status or "virtual_sdcard" in status):
@@ -1110,7 +1110,9 @@ def printer_usage_payload(base_url: str) -> dict:
 
     print_stats = moonraker_result(printer_get(base_url, "/printer/objects/query?print_stats"))
     virtual_sdcard = moonraker_result(printer_get(base_url, "/printer/objects/query?virtual_sdcard"))
+    box = moonraker_result(printer_get(base_url, "/printer/objects/query?box"))
     return {
+        "box": box.get("status", box).get("box", {}),
         "print_stats": print_stats.get("status", print_stats).get("print_stats", {}),
         "virtual_sdcard": virtual_sdcard.get("status", virtual_sdcard).get("virtual_sdcard", {}),
     }
@@ -1122,10 +1124,40 @@ def list_float_values(value) -> list[float]:
     return [max(0.0, clean_float(item, 0.0)) for item in value]
 
 
+def active_cfs_slot_name_from_box(box: dict) -> str:
+    if not isinstance(box, dict):
+        return ""
+    slot_map = box.get("map") if isinstance(box.get("map"), dict) else {}
+    for tray_index in range(1, 5):
+        tray_name = f"T{tray_index}"
+        tray = box.get(tray_name)
+        if not isinstance(tray, dict) or tray.get("state") != "connect":
+            continue
+        filament = clean_text(tray.get("filament")).upper()
+        if filament in {"A", "B", "C", "D"}:
+            slot_name = f"{tray_name}{filament}"
+            mapped = clean_text(slot_map.get(slot_name, slot_name)).upper()
+            return mapped if re.match(r"^T[1-4][A-D]$", mapped) else slot_name
+    filament_index = box.get("filament")
+    if isinstance(filament_index, int) and 0 <= filament_index <= 3:
+        return f"T1{'ABCD'[filament_index]}"
+    return ""
+
+
+def cfs_location_name_for_slot(slot_name: str) -> str:
+    match = re.match(r"^T(\d+)([A-D])$", clean_text(slot_name).upper())
+    if not match:
+        return ""
+    tray_index = clean_int(match.group(1), 1, 1)
+    letter_index = "ABCD".index(match.group(2))
+    return f"CFS Slot {((tray_index - 1) * 4) + letter_index + 1}"
+
+
 def fetch_printer_usage_snapshot(base_url: str) -> dict:
     status = printer_usage_payload(base_url)
     print_stats = status.get("print_stats") or {}
     virtual_sdcard = status.get("virtual_sdcard") or {}
+    box = status.get("box") or {}
     current_print = virtual_sdcard.get("cur_print_data") or {}
     metadata = current_print.get("metadata") or {}
     model_info = metadata.get("model_info") or {}
@@ -1192,6 +1224,7 @@ def fetch_printer_usage_snapshot(base_url: str) -> dict:
         "filament_used_mm": filament_used_mm,
         "basis": basis,
         "parts": parts,
+        "active_cfs_slot_name": active_cfs_slot_name_from_box(box),
     }
 
 
@@ -1246,6 +1279,17 @@ def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sq
         ).fetchall()
     if not loaded_spools:
         return []
+
+    active_slot_name = clean_text(snapshot.get("active_cfs_slot_name")).upper()
+    active_location_name = cfs_location_name_for_slot(active_slot_name)
+    if active_slot_name or active_location_name:
+        for spool in loaded_spools:
+            if (
+                clean_text(spool["cfs_slot_name"]).upper() == active_slot_name
+                or clean_text(spool["location_name"]) == active_location_name
+            ):
+                if spool["remaining_weight_g"] > 0:
+                    return [(spool, min(grams, max(0, spool["remaining_weight_g"])))]
 
     parts = snapshot["parts"]
     total_part_grams = sum(part["planned_g"] for part in parts) or 1.0

@@ -155,6 +155,7 @@ function render() {
   renderUsage();
   renderInventory();
   renderPrinterStatus();
+  renderPrinterOutput();
 }
 
 function renderPrinterStatus(message = null) {
@@ -172,6 +173,16 @@ function renderPrinterStatus(message = null) {
     usageTrackingTimer = null;
   }
   els.printerStatus.textContent = els.printerUrlInput.value ? "Ready" : "Not connected";
+}
+
+function renderPrinterOutput() {
+  if (els.printerOutput.textContent.trim()) return;
+  const lastMessage = state.settings.usage_monitor_last_message;
+  if (!lastMessage) return;
+  const checked = state.settings.usage_monitor_last_checked
+    ? `\nLast checked: ${new Date(state.settings.usage_monitor_last_checked).toLocaleString()}`
+    : "";
+  showPrinterOutput(`${lastMessage}${checked}`);
 }
 
 function renderSelectors() {
@@ -640,20 +651,41 @@ async function printerJson(path) {
 
 async function fetchPrinterStatus() {
   try {
-    const payload = await printerJson("/printer/objects/query?print_stats&virtual_sdcard");
+    const payload = await printerJson("/printer/objects/query?box&print_stats&virtual_sdcard");
     const status = payload.status || payload;
     if (status.print_stats || status.virtual_sdcard) return status;
   } catch (error) {
     // Some printer builds do not accept combined object queries.
   }
-  const [printStatsPayload, sdcardPayload] = await Promise.all([
+  const [boxPayload, printStatsPayload, sdcardPayload] = await Promise.all([
+    printerJson("/printer/objects/query?box").catch(() => ({})),
     printerJson("/printer/objects/query?print_stats"),
     printerJson("/printer/objects/query?virtual_sdcard"),
   ]);
   return {
+    box: (boxPayload.status || boxPayload).box || {},
     print_stats: (printStatsPayload.status || printStatsPayload).print_stats || {},
     virtual_sdcard: (sdcardPayload.status || sdcardPayload).virtual_sdcard || {},
   };
+}
+
+function activeCfsSlotNameFromStatus(status) {
+  const box = status.box || {};
+  const slotMap = box.map || {};
+  for (let trayIndex = 1; trayIndex <= 4; trayIndex += 1) {
+    const trayName = `T${trayIndex}`;
+    const tray = box[trayName] || {};
+    if (tray.state !== "connect") continue;
+    const filament = String(tray.filament || "").toUpperCase();
+    if (!["A", "B", "C", "D"].includes(filament)) continue;
+    const slotName = `${trayName}${filament}`;
+    const mapped = String(slotMap[slotName] || slotName).toUpperCase();
+    return /^T[1-4][A-D]$/.test(mapped) ? mapped : slotName;
+  }
+  if (Number.isInteger(box.filament) && box.filament >= 0 && box.filament <= 3) {
+    return `T1${"ABCD"[box.filament]}`;
+  }
+  return "";
 }
 
 async function fetchPrinterUsageSnapshotFromPage() {
@@ -704,6 +736,7 @@ async function fetchPrinterUsageSnapshotFromPage() {
     filament_used_mm: filamentUsedMm,
     basis: plannedTotalGrams > 0 && progress > 0 ? "browser slicer progress" : "browser extrusion length",
     parts,
+    active_cfs_slot_name: activeCfsSlotNameFromStatus(status),
   };
 }
 
