@@ -158,12 +158,10 @@ dialog {
   display: grid;
   grid-template-columns: 2fr repeat(3, minmax(140px, 1fr));
   gap: 12px;
-  margin-top: 18px;
   padding: 14px;
 }
 
-.panel-stack > .metrics,
-.panel-stack > .controls {
+.panel-stack > .metrics {
   margin-top: 0;
 }
 
@@ -172,10 +170,11 @@ dialog {
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.55fr);
   gap: 14px;
   padding: 14px;
+  align-items: stretch;
 }
 
 .panel-stack {
-  grid-template-rows: auto auto auto;
+  grid-template-rows: 1fr auto;
 }
 
 .split > .panel:not(.cfs-panel) {
@@ -279,14 +278,16 @@ dialog {
 
 .printer-controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) repeat(5, auto);
+  grid-template-columns: repeat(2, minmax(120px, auto));
   gap: 10px;
   align-items: end;
+  justify-content: start;
 }
 
 #printerOutput {
+  height: 100%;
   min-height: 74px;
-  max-height: 160px;
+  max-height: none;
   margin: 0;
   overflow: auto;
   padding: 10px;
@@ -326,8 +327,12 @@ textarea {
 .split {
   display: grid;
   grid-template-columns: calc((100% - 36px) / 4) minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  grid-template-areas:
+    "external stack usage"
+    "controls controls usage";
   gap: 18px;
   margin-top: 18px;
+  align-items: start;
 }
 
 main > .cfs-panel {
@@ -335,6 +340,8 @@ main > .cfs-panel {
 }
 
 .external-panel {
+  grid-area: external;
+  align-self: stretch;
   min-width: 0;
 }
 
@@ -344,8 +351,20 @@ main > .cfs-panel {
 }
 
 .panel-stack {
+  grid-area: stack;
   display: grid;
   gap: 18px;
+  height: 100%;
+}
+
+.split > .controls {
+  grid-area: controls;
+}
+
+.usage-panel {
+  grid-area: usage;
+  max-height: 420px;
+  overflow: hidden;
 }
 
 .panel,
@@ -843,6 +862,13 @@ dialog form {
     grid-template-columns: 1fr 1fr;
   }
 
+  .split {
+    grid-template-areas:
+      "external stack"
+      "controls controls"
+      "usage usage";
+  }
+
   .controls label:first-child,
   .printer-panel,
   .split,
@@ -882,6 +908,14 @@ dialog form {
   .form-grid,
   .split {
     grid-template-columns: 1fr;
+  }
+
+  .split {
+    grid-template-areas:
+      "external"
+      "stack"
+      "controls"
+      "usage";
   }
 
   .card-actions {
