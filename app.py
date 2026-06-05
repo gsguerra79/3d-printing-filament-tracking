@@ -1172,6 +1172,7 @@ def fetch_printer_usage_snapshot(base_url: str) -> dict:
     material = clean_text(
         metadata.get("filament_type") or model_info.get("MaterialType") or print_stats.get("filament_type")
     ).upper()
+    material_values = [item.strip().upper() for item in re.split(r"[;,]", material) if item.strip()]
     progress = clean_float(virtual_sdcard.get("progress"), 0.0)
     progress = max(0.0, min(progress, 1.0))
     planned_grams = list_float_values(metadata.get("filament_used_g"))
@@ -1202,7 +1203,7 @@ def fetch_printer_usage_snapshot(base_url: str) -> dict:
             {
                 "index": index,
                 "planned_g": grams,
-                "material": material,
+                "material": material_values[index] if index < len(material_values) else material,
                 "color_hex": normalize_color(colors[index]) if index < len(colors) and colors[index] else "",
             }
         )
@@ -1320,6 +1321,103 @@ def active_usage_spool_ids(snapshot: dict) -> str:
     return ",".join(str(spool["id"]) for spool, _grams in allocations)
 
 
+def planned_part_gram_targets(snapshot: dict) -> list[int]:
+    parts = [part for part in snapshot.get("parts", []) if clean_float(part.get("planned_g"), 0.0) > 0]
+    if not parts:
+        return []
+    target_total = max(0, round(sum(clean_float(part.get("planned_g"), 0.0) for part in parts)))
+    targets = []
+    remaining = target_total
+    for index, part in enumerate(parts):
+        grams = remaining if index == len(parts) - 1 else max(0, round(clean_float(part.get("planned_g"), 0.0)))
+        targets.append(grams)
+        remaining -= grams
+    return targets
+
+
+def reconcile_completed_multicolor_usage(snapshot: dict) -> dict | None:
+    if snapshot.get("state") != "completed" or len(snapshot.get("parts", [])) < 2:
+        return None
+    if not snapshot.get("signature") or not snapshot.get("filename"):
+        return None
+    targets = sorted(planned_part_gram_targets(snapshot), reverse=True)
+    if len(targets) < 2:
+        return None
+
+    signature_pattern = f"%Print signature: {snapshot['signature']}%"
+    created = now_iso()
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT spool_id, SUM(grams_used) AS grams_used
+            FROM usage_events
+            WHERE project = ?
+              AND notes LIKE 'Auto printer tracking%'
+              AND notes LIKE ?
+            GROUP BY spool_id
+            ORDER BY grams_used DESC, spool_id
+            """,
+            (snapshot["filename"], signature_pattern),
+        ).fetchall()
+        if len(rows) < 2:
+            return None
+
+        observed = rows[: len(targets)]
+        changes = []
+        for row, target in zip(observed, targets):
+            current = clean_int(row["grams_used"], 0, 0)
+            spool_id = row["spool_id"]
+            delta = target - current
+            if delta:
+                con.execute(
+                    """
+                    UPDATE spools
+                    SET remaining_weight_g = max(0, remaining_weight_g - ?), updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (delta, created, spool_id),
+                )
+            event = con.execute(
+                """
+                SELECT id FROM usage_events
+                WHERE spool_id = ?
+                  AND project = ?
+                  AND notes LIKE 'Auto printer tracking%'
+                  AND notes LIKE ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (spool_id, snapshot["filename"], signature_pattern),
+            ).fetchone()
+            if event:
+                con.execute(
+                    """
+                    UPDATE usage_events
+                    SET grams_used = ?,
+                        notes = CASE
+                            WHEN notes LIKE '%Rebalanced to completed slicer split.%' THEN notes
+                            ELSE notes || ' Rebalanced to completed slicer split.'
+                        END,
+                        created_at = ?
+                    WHERE id = ?
+                    """,
+                    (target, created, event["id"]),
+                )
+            changes.append({"spool_id": spool_id, "grams": target, "previous_grams": current})
+
+    message = f"Rebalanced completed multicolor print to slicer split ({', '.join(str(item) + 'g' for item in targets)})."
+    set_settings(
+        {
+            "usage_monitor_used_grams": f"{snapshot['used_grams']:.4f}",
+            "usage_monitor_residual_grams": "0",
+            "usage_monitor_last_message": message,
+            "usage_monitor_last_checked": created,
+            "usage_monitor_active_spool_ids": "",
+        }
+    )
+    return {"tracked": True, "deducted": 0, "rebalanced": True, "allocations": changes, "message": message, "snapshot": snapshot}
+
+
 def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
     with USAGE_MONITOR_LOCK:
         if not snapshot["signature"]:
@@ -1335,6 +1433,10 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
         last_used_grams = clean_float(get_setting("usage_monitor_used_grams"), 0.0)
         residual_grams = clean_float(get_setting("usage_monitor_residual_grams"), 0.0)
         active_spool_ids = active_usage_spool_ids(snapshot)
+
+        reconciliation = reconcile_completed_multicolor_usage(snapshot)
+        if reconciliation:
+            return reconciliation
 
         if reset or snapshot["signature"] != last_signature:
             set_settings(
