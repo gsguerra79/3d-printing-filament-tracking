@@ -24,7 +24,7 @@ STATIC_ROOT = ROOT / "static"
 DB_PATH = ROOT / "filament_inventory.sqlite3"
 USAGE_MONITOR_LOCK = threading.Lock()
 USAGE_MONITOR_STARTED = False
-USAGE_MONITOR_INTERVAL_SECONDS = 30
+USAGE_MONITOR_INTERVAL_SECONDS = 10
 
 MATERIAL_DENSITY = {
     "PLA": 1.24,
@@ -1127,7 +1127,6 @@ def list_float_values(value) -> list[float]:
 def active_cfs_slot_name_from_box(box: dict) -> str:
     if not isinstance(box, dict):
         return ""
-    slot_map = box.get("map") if isinstance(box.get("map"), dict) else {}
     for tray_index in range(1, 5):
         tray_name = f"T{tray_index}"
         tray = box.get(tray_name)
@@ -1135,9 +1134,7 @@ def active_cfs_slot_name_from_box(box: dict) -> str:
             continue
         filament = clean_text(tray.get("filament")).upper()
         if filament in {"A", "B", "C", "D"}:
-            slot_name = f"{tray_name}{filament}"
-            mapped = clean_text(slot_map.get(slot_name, slot_name)).upper()
-            return mapped if re.match(r"^T[1-4][A-D]$", mapped) else slot_name
+            return f"{tray_name}{filament}"
     filament_index = box.get("filament")
     if isinstance(filament_index, int) and 0 <= filament_index <= 3:
         return f"T1{'ABCD'[filament_index]}"
@@ -1414,6 +1411,11 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
         created = now_iso()
         with connect() as con:
             for spool, grams in allocations:
+                signature_note = (
+                    f" Print signature: {snapshot['signature']}."
+                    if snapshot.get("signature")
+                    else ""
+                )
                 remaining = max(0, spool["remaining_weight_g"] - grams)
                 status = "loaded" if remaining > 0 else "retired"
                 con.execute(
@@ -1433,6 +1435,7 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                         WHERE spool_id = ?
                           AND project = ?
                           AND notes LIKE 'Auto printer tracking%'
+                          AND notes LIKE ?
                         ORDER BY id DESC
                         LIMIT 1
                     )
@@ -1442,9 +1445,15 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                         created,
                         spool["id"],
                         snapshot["filename"],
+                        f"%Print signature: {snapshot['signature']}%",
                     ),
                 )
                 if event_update.rowcount == 0:
+                    active_slot_note = (
+                        f" Active CFS slot: {snapshot['active_cfs_slot_name']}."
+                        if snapshot.get("active_cfs_slot_name")
+                        else ""
+                    )
                     con.execute(
                         """
                         INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at)
@@ -1454,7 +1463,7 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                             spool["id"],
                             grams,
                             snapshot["filename"],
-                            f"Auto printer tracking from {snapshot['basis']} while print state was {snapshot['state'] or 'unknown'}.",
+                            f"Auto printer tracking from {snapshot['basis']} while print state was {snapshot['state'] or 'unknown'}.{active_slot_note}{signature_note}",
                             created,
                         ),
                     )

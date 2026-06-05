@@ -671,16 +671,13 @@ async function fetchPrinterStatus() {
 
 function activeCfsSlotNameFromStatus(status) {
   const box = status.box || {};
-  const slotMap = box.map || {};
   for (let trayIndex = 1; trayIndex <= 4; trayIndex += 1) {
     const trayName = `T${trayIndex}`;
     const tray = box[trayName] || {};
     if (tray.state !== "connect") continue;
     const filament = String(tray.filament || "").toUpperCase();
     if (!["A", "B", "C", "D"].includes(filament)) continue;
-    const slotName = `${trayName}${filament}`;
-    const mapped = String(slotMap[slotName] || slotName).toUpperCase();
-    return /^T[1-4][A-D]$/.test(mapped) ? mapped : slotName;
+    return `${trayName}${filament}`;
   }
   if (Number.isInteger(box.filament) && box.filament >= 0 && box.filament <= 3) {
     return `T1${"ABCD"[box.filament]}`;
@@ -786,7 +783,7 @@ function schedulePageUsageTracking() {
     } catch (error) {
       showPrinterOutput(`Usage tracking paused: ${error.message}`);
     }
-  }, 30000);
+  }, 10000);
 }
 
 async function checkPrinterUsage(reset = false) {
