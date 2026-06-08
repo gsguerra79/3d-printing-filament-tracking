@@ -594,6 +594,53 @@ def normalize_spool_payload(data: dict, existing: dict | None = None) -> dict:
     }
 
 
+def dehumidifier_location_id(con: sqlite3.Connection) -> int | None:
+    row = con.execute(
+        "SELECT id FROM locations WHERE name = 'Dehumidifier' LIMIT 1"
+    ).fetchone()
+    if row:
+        return row["id"]
+    row = con.execute(
+        "SELECT id FROM locations WHERE kind = 'dryer' ORDER BY sort_order, id LIMIT 1"
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def enforce_single_loaded_spool(
+    con: sqlite3.Connection,
+    location_id: int | None,
+    loaded_spool_id: int,
+) -> None:
+    if not location_id:
+        return
+    location = con.execute(
+        "SELECT * FROM locations WHERE id = ?",
+        (location_id,),
+    ).fetchone()
+    if not location or location["kind"] != "cfs":
+        return
+    con.execute(
+        """
+        UPDATE spools
+        SET status = 'open',
+            location_id = ?,
+            cfs_slot_name = NULL,
+            opened_at = COALESCE(opened_at, ?),
+            updated_at = ?
+        WHERE status = 'loaded'
+          AND location_id = ?
+          AND id != ?
+        """,
+        (
+            dehumidifier_location_id(con),
+            datetime.now().date().isoformat(),
+            now_iso(),
+            location_id,
+            loaded_spool_id,
+        ),
+    )
+
+
 def lookup_barcode(barcode: str) -> dict:
     barcode = clean_barcode(barcode)
     if not barcode:
@@ -993,9 +1040,10 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                         existing["id"],
                     ),
                 )
+                enforce_single_loaded_spool(con, location_id, existing["id"])
             else:
                 created = now_iso()
-                con.execute(
+                cur = con.execute(
                     """
                     INSERT INTO spools (
                         material, brand, color_name, color_hex, diameter,
@@ -1020,6 +1068,7 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                         created,
                     ),
                 )
+                enforce_single_loaded_spool(con, location_id, cur.lastrowid)
             touched += 1
 
         if seen_location_ids:
@@ -1839,6 +1888,7 @@ class Handler(SimpleHTTPRequestHandler):
                             created,
                         ),
                     )
+                    enforce_single_loaded_spool(con, data["location_id"], cur.lastrowid)
                 self.send_json({"id": cur.lastrowid, **fetch_bootstrap()}, 201)
                 return
 
@@ -1924,6 +1974,7 @@ class Handler(SimpleHTTPRequestHandler):
                             spool_id,
                         ),
                     )
+                    enforce_single_loaded_spool(con, data["location_id"], spool_id)
                 self.send_json(fetch_bootstrap())
                 return
         except (json.JSONDecodeError, ValueError, sqlite3.Error) as exc:

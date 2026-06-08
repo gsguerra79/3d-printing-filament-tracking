@@ -22,6 +22,9 @@ const els = {
   usageDialog: document.querySelector("#usageDialog"),
   usageForm: document.querySelector("#usageForm"),
   usageSpoolName: document.querySelector("#usageSpoolName"),
+  loadDialog: document.querySelector("#loadDialog"),
+  loadForm: document.querySelector("#loadForm"),
+  loadSpoolName: document.querySelector("#loadSpoolName"),
   cfsGrid: document.querySelector("#cfsGrid"),
   externalHolderGrid: document.querySelector("#externalHolderGrid"),
   externalHolderCount: document.querySelector("#externalHolderCount"),
@@ -69,6 +72,8 @@ const fields = {
   gramsUsed: document.querySelector("#gramsUsedInput"),
   project: document.querySelector("#projectInput"),
   usageNotes: document.querySelector("#usageNotesInput"),
+  loadSpoolId: document.querySelector("#loadSpoolId"),
+  loadLocation: document.querySelector("#loadLocationInput"),
 };
 
 let barcodeStream = null;
@@ -383,11 +388,11 @@ function createSpoolCard(spool, compact = false) {
   card.querySelector(".tag-row").innerHTML = tags.join("");
 
   card.querySelector('[data-action="edit"]').addEventListener("click", () => openSpoolDialog(spool));
-  card.querySelector('[data-action="usage"]').addEventListener("click", () => openUsageDialog(spool));
+  card.querySelector('[data-action="load"]').addEventListener("click", () => openLoadDialog(spool));
   card.querySelector('[data-action="retire"]').addEventListener("click", () => retireSpool(spool));
   card.querySelector('[data-action="delete"]').addEventListener("click", () => deleteSpool(spool));
   if (compact) {
-    card.querySelector('[data-action="usage"]').remove();
+    card.querySelector('[data-action="load"]').remove();
     card.querySelector('[data-action="retire"]').remove();
     card.querySelector('[data-action="delete"]').remove();
   }
@@ -462,6 +467,26 @@ function openUsageDialog(spool) {
   els.usageSpoolName.textContent = `${spoolTitle(spool)} - ${spool.remaining_weight_g}g remaining`;
   fields.gramsUsed.max = spool.remaining_weight_g;
   els.usageDialog.showModal();
+}
+
+function loadableLocations() {
+  return state.locations.filter(
+    (location) => /^CFS Slot \d+$/.test(location.name) || location.name === "External Spool Holder",
+  );
+}
+
+function openLoadDialog(spool) {
+  els.loadForm.reset();
+  fields.loadSpoolId.value = spool.id;
+  els.loadSpoolName.textContent = `${spoolTitle(spool)} - ${spool.remaining_weight_g}g remaining`;
+  fields.loadLocation.innerHTML = loadableLocations()
+    .map((location) => `<option value="${location.id}">${escapeHtml(location.name)}</option>`)
+    .join("");
+  const currentLocation = loadableLocations().some((location) => location.id === spool.location_id)
+    ? spool.location_id
+    : "";
+  fields.loadLocation.value = currentLocation || fields.loadLocation.options[0]?.value || "";
+  els.loadDialog.showModal();
 }
 
 async function retireSpool(spool) {
@@ -1169,6 +1194,22 @@ els.usageForm.addEventListener("submit", async (event) => {
     }),
   });
   els.usageDialog.close();
+  await refresh();
+});
+
+els.loadForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const spool = state.spools.find((candidate) => String(candidate.id) === String(fields.loadSpoolId.value));
+  if (!spool) return;
+  await api(`/api/spools/${spool.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      ...spool,
+      status: "loaded",
+      location_id: fields.loadLocation.value,
+    }),
+  });
+  els.loadDialog.close();
   await refresh();
 });
 

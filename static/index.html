@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Filament Inventory</title>
-    <link rel="stylesheet" href="/styles.css?v=active-slot-8" />
+    <link rel="stylesheet" href="/styles.css?v=load-flow-9" />
   </head>
   <body>
     <header class="topbar">
@@ -245,6 +245,27 @@
       </form>
     </dialog>
 
+    <dialog id="loadDialog">
+      <form id="loadForm" method="dialog">
+        <div class="dialog-header">
+          <h2>Load Spool</h2>
+          <button class="icon-button" type="button" data-close-dialog aria-label="Close">x</button>
+        </div>
+        <input type="hidden" id="loadSpoolId" />
+        <p class="selected-spool" id="loadSpoolName"></p>
+        <div class="form-grid single">
+          <label>
+            Load into
+            <select id="loadLocationInput" required></select>
+          </label>
+        </div>
+        <footer class="dialog-actions">
+          <button class="secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="primary" type="submit">Load</button>
+        </footer>
+      </form>
+    </dialog>
+
     <template id="spoolCardTemplate">
       <article class="spool-card">
         <div class="spool-main">
@@ -263,7 +284,7 @@
           <summary aria-label="Spool actions"></summary>
           <div class="card-actions">
             <button type="button" data-action="edit">Edit</button>
-            <button type="button" data-action="usage">Use</button>
+            <button type="button" data-action="load">Load</button>
             <button type="button" data-action="retire">Retire</button>
             <button class="danger" type="button" data-action="delete">Delete</button>
           </div>
@@ -271,6 +292,6 @@
       </article>
     </template>
 
-    <script src="/app.js?v=active-slot-8"></script>
+    <script src="/app.js?v=load-flow-9"></script>
   </body>
 </html>
