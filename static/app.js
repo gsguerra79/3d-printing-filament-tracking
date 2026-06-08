@@ -4,7 +4,6 @@ const state = {
   usage: [],
   settings: {},
   catalogCount: 0,
-  catalogResults: [],
   pendingBarcode: "",
   filters: {
     search: "",
@@ -16,6 +15,7 @@ const state = {
 
 const els = {
   addSpoolButton: document.querySelector("#addSpoolButton"),
+  fluiddButton: document.querySelector("#fluiddButton"),
   spoolDialog: document.querySelector("#spoolDialog"),
   spoolForm: document.querySelector("#spoolForm"),
   spoolDialogTitle: document.querySelector("#spoolDialogTitle"),
@@ -25,6 +25,7 @@ const els = {
   loadDialog: document.querySelector("#loadDialog"),
   loadForm: document.querySelector("#loadForm"),
   loadSpoolName: document.querySelector("#loadSpoolName"),
+  genericBrandField: document.querySelector("#genericBrandField"),
   cfsGrid: document.querySelector("#cfsGrid"),
   externalHolderGrid: document.querySelector("#externalHolderGrid"),
   externalHolderCount: document.querySelector("#externalHolderCount"),
@@ -45,7 +46,6 @@ const els = {
   stopUsageButton: document.querySelector("#stopUsageButton"),
   printerStatus: document.querySelector("#printerStatus"),
   printerOutput: document.querySelector("#printerOutput"),
-  catalogResults: document.querySelector("#catalogResults"),
   scanBarcodeButton: document.querySelector("#scanBarcodeButton"),
   stopBarcodeButton: document.querySelector("#stopBarcodeButton"),
   barcodeScanner: document.querySelector("#barcodeScanner"),
@@ -55,8 +55,11 @@ const els = {
 
 const fields = {
   spoolId: document.querySelector("#spoolId"),
+  crealityFilamentId: document.querySelector("#crealityFilamentIdInput"),
+  crealityBrand: document.querySelector("#crealityBrandInput"),
   barcode: document.querySelector("#barcodeInput"),
   material: document.querySelector("#materialInput"),
+  crealityName: document.querySelector("#crealityNameInput"),
   brand: document.querySelector("#brandInput"),
   colorName: document.querySelector("#colorNameInput"),
   colorHex: document.querySelector("#colorHexInput"),
@@ -82,6 +85,8 @@ let barcodeScanTimer = null;
 let barcodeScanAttempts = 0;
 const barcodeCanvas = document.createElement("canvas");
 let usageTrackingTimer = null;
+let pageRefreshTimer = null;
+let colorOptions = [];
 
 const materialDensities = {
   PLA: 1.24,
@@ -113,10 +118,27 @@ async function refresh() {
   state.usage = data.usage;
   state.settings = data.settings || {};
   state.catalogCount = data.catalog_count || 0;
-  if (!els.printerUrlInput.value && state.settings.printer_base_url) {
+  if (
+    state.settings.printer_base_url &&
+    (!els.printerUrlInput.value || document.activeElement !== els.printerUrlInput)
+  ) {
     els.printerUrlInput.value = state.settings.printer_base_url;
   }
   render();
+}
+
+function schedulePageRefresh() {
+  window.clearInterval(pageRefreshTimer);
+  pageRefreshTimer = window.setInterval(async () => {
+    if (els.spoolDialog.open || els.usageDialog.open || els.loadDialog.open) {
+      return;
+    }
+    try {
+      await refresh();
+    } catch (error) {
+      showPrinterOutput(`Inventory refresh paused: ${error.message}`);
+    }
+  }, 10000);
 }
 
 function spoolTitle(spool) {
@@ -367,7 +389,9 @@ function createSpoolCard(spool, compact = false) {
   const percent = percentRemaining(spool);
   card.dataset.id = spool.id;
   card.classList.toggle("compact", compact);
-  card.classList.toggle("low", percent <= 20);
+  card.classList.toggle("bar-green", percent >= 50);
+  card.classList.toggle("bar-amber", percent < 50 && percent >= 10);
+  card.classList.toggle("bar-red", percent < 10);
   const swatch = card.querySelector(".swatch");
   swatch.style.background = spool.color_hex;
   swatch.style.setProperty("--spool-color", spool.color_hex);
@@ -436,19 +460,15 @@ function labelStatus(status) {
   }[status] || status;
 }
 
-function openSpoolDialog(spool = null) {
+async function openSpoolDialog(spool = null) {
   els.spoolForm.reset();
   renderSelectors();
   els.spoolDialogTitle.textContent = spool ? "Edit Spool" : "Add Spool";
   fields.spoolId.value = spool?.id || "";
-  state.catalogResults = [];
+  fields.crealityFilamentId.value = spool?.creality_filament_id || "";
   state.pendingBarcode = "";
-  renderCatalogResults();
   setBarcodeStatus("");
   fields.barcode.value = spool?.barcode || "";
-  fields.material.value = spool?.material || "PLA";
-  fields.brand.value = spool?.brand || "";
-  fields.colorName.value = spool?.color_name || "";
   fields.colorHex.value = spool?.color_hex || "#333333";
   fields.status.value = spool?.status || "sealed";
   fields.location.value = spool?.location_id || defaultLocationForStatus(fields.status.value);
@@ -458,6 +478,7 @@ function openSpoolDialog(spool = null) {
   fields.purchasedAt.value = spool?.purchased_at || "";
   fields.openedAt.value = spool?.opened_at || "";
   fields.notes.value = spool?.notes || "";
+  await populateSpoolProfileControls(spool);
   els.spoolDialog.showModal();
 }
 
@@ -473,6 +494,96 @@ function loadableLocations() {
   return state.locations.filter(
     (location) => /^CFS Slot \d+$/.test(location.name) || location.name === "External Spool Holder",
   );
+}
+
+function optionHtml(value, label = value) {
+  return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+}
+
+async function loadCatalogOptions({ brand = "", type = "" } = {}) {
+  const params = new URLSearchParams();
+  if (brand) params.set("brand", brand);
+  if (type) params.set("type", type);
+  return api(`/api/catalog/options?${params.toString()}`);
+}
+
+function setGenericBrandVisibility() {
+  const isGeneric = fields.crealityBrand.value === "Generic";
+  els.genericBrandField.hidden = !isGeneric;
+  fields.brand.required = isGeneric;
+}
+
+async function populateSpoolTypeOptions({ selectedType = "" } = {}) {
+  const brand = fields.crealityBrand.value;
+  const options = await loadCatalogOptions({ brand });
+  fields.material.innerHTML = options.types.map((type) => optionHtml(type)).join("");
+  fields.material.value = selectedType && options.types.includes(selectedType)
+    ? selectedType
+    : fields.material.options[0]?.value || "";
+}
+
+async function populateSpoolNameOptions({ selectedName = "", selectedId = "" } = {}) {
+  const options = await loadCatalogOptions({
+    brand: fields.crealityBrand.value,
+    type: fields.material.value,
+  });
+  fields.crealityName.innerHTML = options.names
+    .map((item) => optionHtml(item.creality_filament_id, item.creality_name || item.name))
+    .join("");
+  if (selectedId && Array.from(fields.crealityName.options).some((option) => option.value === String(selectedId))) {
+    fields.crealityName.value = String(selectedId);
+    fields.crealityFilamentId.value = String(selectedId);
+    return;
+  }
+  const matching = options.names.find((item) => (item.creality_name || item.name) === selectedName);
+  fields.crealityName.value = matching
+    ? String(matching.creality_filament_id)
+    : fields.crealityName.options[0]?.value || "";
+  fields.crealityFilamentId.value = fields.crealityName.value;
+}
+
+function normalizeHexForCompare(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+async function populateSpoolColorOptions(spool = null) {
+  const options = await loadCatalogOptions();
+  colorOptions = options.colors || [];
+  fields.colorName.innerHTML = colorOptions
+    .map((color) => `<option value="${escapeHtml(color.name)}" data-hex="${escapeHtml(color.hex || "#888888")}">${escapeHtml(color.name)}</option>`)
+    .join("");
+
+  const exactName = colorOptions.find((color) => color.name === spool?.color_name);
+  const exactHex = colorOptions.find(
+    (color) => normalizeHexForCompare(color.hex) === normalizeHexForCompare(spool?.color_hex),
+  );
+  const selected = exactName || exactHex || colorOptions.find((color) => color.name === "Black") || colorOptions[0];
+  fields.colorName.value = selected?.name || "";
+  fields.colorHex.value = selected?.hex || "#000000";
+}
+
+function updateColorSwatchFromSelection() {
+  const selectedHex = fields.colorName.options[fields.colorName.selectedIndex]?.dataset.hex;
+  if (selectedHex) {
+    fields.colorHex.value = selectedHex;
+  }
+}
+
+async function populateSpoolProfileControls(spool = null) {
+  const options = await loadCatalogOptions();
+  fields.crealityBrand.innerHTML = options.brands.map((brand) => optionHtml(brand)).join("");
+  const selectedBrand = spool?.creality_brand || (options.brands.includes(spool?.brand) ? spool.brand : "Generic");
+  fields.crealityBrand.value = options.brands.includes(selectedBrand)
+    ? selectedBrand
+    : fields.crealityBrand.options[0]?.value || "";
+  fields.brand.value = fields.crealityBrand.value === "Generic" ? spool?.brand || "" : "";
+  setGenericBrandVisibility();
+  await populateSpoolTypeOptions({ selectedType: spool?.creality_type || spool?.material || "PLA" });
+  await populateSpoolNameOptions({
+    selectedName: spool?.creality_name || "",
+    selectedId: spool?.creality_filament_id || "",
+  });
+  await populateSpoolColorOptions(spool);
 }
 
 function openLoadDialog(spool) {
@@ -522,10 +633,16 @@ function defaultLocationForStatus(status) {
 }
 
 function payloadFromSpoolForm() {
+  const selectedName = fields.crealityName.options[fields.crealityName.selectedIndex]?.textContent || "";
+  const selectedBrand = fields.crealityBrand.value;
   return {
     barcode: fields.barcode.value,
+    creality_filament_id: fields.crealityName.value || fields.crealityFilamentId.value,
+    creality_brand: selectedBrand,
+    creality_type: fields.material.value,
+    creality_name: selectedName,
     material: fields.material.value,
-    brand: fields.brand.value,
+    brand: selectedBrand === "Generic" ? fields.brand.value : selectedBrand,
     color_name: fields.colorName.value,
     color_hex: fields.colorHex.value,
     status: fields.status.value,
@@ -540,7 +657,9 @@ function payloadFromSpoolForm() {
 }
 
 function setBarcodeStatus(message) {
-  els.barcodeStatus.textContent = message;
+  if (els.barcodeStatus) {
+    els.barcodeStatus.textContent = message;
+  }
 }
 
 async function barcodePermissionState() {
@@ -570,6 +689,26 @@ function printerBaseUrl() {
   const value = els.printerUrlInput.value.trim();
   if (!value) throw new Error("Printer address is required.");
   return value.startsWith("http://") || value.startsWith("https://") ? value.replace(/\/+$/, "") : `http://${value}`;
+}
+
+function fluiddUrl() {
+  const base = printerBaseUrl();
+  const url = new URL(base);
+  if (!url.port) {
+    url.port = "4408";
+  }
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "/";
+  return url.toString();
+}
+
+function openFluidd() {
+  try {
+    window.open(fluiddUrl(), "_blank", "noopener");
+  } catch (error) {
+    showPrinterOutput(`Could not open Fluidd: ${error.message}`);
+  }
 }
 
 function showPrinterOutput(message, detail = null) {
@@ -857,133 +996,17 @@ async function stopUsageTracking() {
   }
 }
 
-function renderCatalogResults() {
-  if (state.pendingBarcode) {
-    renderBarcodeCandidates();
-    return;
-  }
-  if (!state.catalogCount) {
-    els.catalogResults.innerHTML = `<div class="catalog-help">No catalog loaded yet.</div>`;
-    return;
-  }
-  const typed = [fields.brand.value, fields.material.value, fields.colorName.value]
-    .join(" ")
-    .trim();
-  if (typed.length < 2) {
-    els.catalogResults.innerHTML = `<div class="catalog-help">Catalog matches appear here as you enter brand, material, and color. You can save manual entries even when there is no match.</div>`;
-    return;
-  }
-  if (!state.catalogResults.length) {
-    els.catalogResults.innerHTML = `<div class="catalog-help">No catalog matches.</div>`;
-    return;
-  }
-  els.catalogResults.innerHTML = state.catalogResults
-    .map(
-      (item) => `
-        <button class="catalog-result" type="button" data-catalog-id="${item.id}">
-          <span class="catalog-swatch" style="background:${escapeHtml(item.color_hex || "#888888")}"></span>
-          <span>
-            <strong>${escapeHtml(item.brand)}</strong>
-            <small>${escapeHtml(item.material)} / ${escapeHtml(item.color_name)}</small>
-          </span>
-        </button>
-      `
-    )
-    .join("");
-  els.catalogResults.querySelectorAll("[data-catalog-id]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const selected = state.catalogResults.find((item) => String(item.id) === button.dataset.catalogId);
-      if (selected) applyCatalogItem(selected);
-    });
-  });
-}
-
-function applyCatalogItem(selected) {
-  if (selected.barcode && !fields.barcode.value) {
-    fields.barcode.value = selected.barcode;
-  }
-  fields.brand.value = selected.brand;
-  fields.material.value = selected.material;
-  fields.colorName.value = selected.color_name;
-  fields.colorHex.value = selected.color_hex || "#888888";
-  state.catalogResults = [];
-  state.pendingBarcode = "";
-  renderCatalogResults();
-}
-
-function applySpoolProduct(spool) {
+async function applySpoolProduct(spool) {
+  fields.crealityFilamentId.value = spool.creality_filament_id || "";
+  fields.crealityBrand.value = spool.creality_brand || fields.crealityBrand.value;
   fields.brand.value = spool.brand;
-  fields.material.value = spool.material;
   fields.colorName.value = spool.color_name;
   fields.colorHex.value = spool.color_hex || "#888888";
   fields.diameter.value = spool.diameter || "1.75mm";
   fields.originalWeight.value = spool.original_weight_g || 1000;
   fields.remainingWeight.value = spool.original_weight_g || 1000;
-  state.catalogResults = [];
+  await populateSpoolProfileControls(spool);
   state.pendingBarcode = "";
-  renderCatalogResults();
-}
-
-function candidateSpools() {
-  const hasSpecificText = fields.brand.value.trim() || fields.colorName.value.trim();
-  const materialText =
-    hasSpecificText || fields.material.value.trim().toUpperCase() !== "PLA"
-      ? fields.material.value
-      : "";
-  const terms = [fields.brand.value, materialText, fields.colorName.value]
-    .join(" ")
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
-  return state.spools
-    .filter((spool) => spool.status !== "retired")
-    .filter((spool) => {
-      if (!terms.length) return true;
-      const haystack = [spool.brand, spool.material, spool.color_name].join(" ").toLowerCase();
-      return terms.every((term) => haystack.includes(term));
-    })
-    .sort((a, b) => {
-      const statusOrder = { sealed: 1, open: 2, loaded: 3, retired: 4 };
-      return (
-        (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9) ||
-        a.brand.localeCompare(b.brand) ||
-        a.color_name.localeCompare(b.color_name)
-      );
-    })
-    .slice(0, 30);
-}
-
-function renderBarcodeCandidates() {
-  const spools = candidateSpools();
-  if (!spools.length) {
-    els.catalogResults.innerHTML = `<div class="catalog-help">No barcode match yet. Enter the filament details, then save; this barcode will be remembered next time.</div>`;
-    return;
-  }
-  els.catalogResults.innerHTML = `
-    <div class="catalog-help">No barcode match yet. Pick the matching filament below to teach this barcode.</div>
-    ${spools
-      .map(
-        (spool) => `
-          <button class="catalog-result" type="button" data-barcode-spool-id="${spool.id}">
-            <span class="catalog-swatch" style="background:${escapeHtml(spool.color_hex || "#888888")}"></span>
-            <span>
-              <strong>${escapeHtml(spool.brand)} ${escapeHtml(spool.color_name)}</strong>
-              <small>${escapeHtml(spool.material)} / ${escapeHtml(labelStatus(spool.status))} / ${escapeHtml(spool.location_name || "No location")}</small>
-            </span>
-          </button>
-        `
-      )
-      .join("")}
-  `;
-  els.catalogResults.querySelectorAll("[data-barcode-spool-id]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const selected = state.spools.find((spool) => String(spool.id) === button.dataset.barcodeSpoolId);
-      if (selected) {
-        applySpoolProduct(selected);
-        setBarcodeStatus("Product details copied. Save to remember this barcode.");
-      }
-    });
-  });
 }
 
 function debounce(fn, delay = 250) {
@@ -992,31 +1015,6 @@ function debounce(fn, delay = 250) {
     window.clearTimeout(timer);
     timer = window.setTimeout(() => fn(...args), delay);
   };
-}
-
-async function searchCatalog() {
-  const brand = fields.brand.value.trim();
-  const material = fields.material.value.trim();
-  const color = fields.colorName.value.trim();
-  if ([brand, material, color].join(" ").trim().length < 2) {
-    state.catalogResults = [];
-    renderCatalogResults();
-    return;
-  }
-  try {
-    const params = new URLSearchParams({
-      brand,
-      material,
-      color,
-      limit: "30",
-    });
-    const data = await api(`/api/catalog/search?${params.toString()}`);
-    state.catalogResults = data.results || [];
-    renderCatalogResults();
-  } catch (error) {
-    state.catalogResults = [];
-    els.catalogResults.innerHTML = `<div class="catalog-help">Catalog search failed.</div>`;
-  }
 }
 
 async function lookupBarcode(code) {
@@ -1028,19 +1026,12 @@ async function lookupBarcode(code) {
     const params = new URLSearchParams({ code: barcode });
     const data = await api(`/api/barcode/lookup?${params.toString()}`);
     if (data.spools?.length) {
-      applySpoolProduct(data.spools[0]);
+      await applySpoolProduct(data.spools[0]);
       setBarcodeStatus("Matched an existing spool. Product details copied.");
       return;
     }
-    if (data.catalog?.length) {
-      applyCatalogItem(data.catalog[0]);
-      setBarcodeStatus("Matched the catalog. Product details copied.");
-      return;
-    }
     state.pendingBarcode = barcode;
-    state.catalogResults = [];
-    renderBarcodeCandidates();
-    setBarcodeStatus("No match yet. Pick an existing filament below or fill the details once.");
+    setBarcodeStatus("No match yet. Fill the spool details once, then save; this barcode will be remembered next time.");
   } catch (error) {
     setBarcodeStatus("Barcode lookup failed. You can still save it manually.");
   }
@@ -1136,31 +1127,25 @@ function stopBarcodeScanner(hide = true) {
     barcodeStream = null;
   }
   barcodeScanAttempts = 0;
-  els.barcodeVideo.srcObject = null;
-  if (hide) {
+  if (els.barcodeVideo) {
+    els.barcodeVideo.srcObject = null;
+  }
+  if (hide && els.barcodeScanner) {
     els.barcodeScanner.hidden = true;
   }
 }
 
 els.addSpoolButton.addEventListener("click", () => openSpoolDialog());
+els.fluiddButton.addEventListener("click", openFluidd);
 els.probePrinterButton?.addEventListener("click", probePrinter);
 els.syncPrinterButton.addEventListener("click", syncPrinter);
 els.checkUsageButton.addEventListener("click", () => checkPrinterUsage(false));
 els.startUsageButton?.addEventListener("click", startUsageTracking);
 els.stopUsageButton?.addEventListener("click", stopUsageTracking);
 els.printerUrlInput.addEventListener("input", () => renderPrinterStatus());
-els.scanBarcodeButton.addEventListener("click", startBarcodeScanner);
-els.stopBarcodeButton.addEventListener("click", () => stopBarcodeScanner());
-fields.barcode.addEventListener("change", () => lookupBarcode(fields.barcode.value));
-[fields.brand, fields.material, fields.colorName].forEach((input) => {
-  input.addEventListener("input", debounce(() => {
-    if (state.pendingBarcode) {
-      renderBarcodeCandidates();
-    } else {
-      searchCatalog();
-    }
-  }, 220));
-});
+els.scanBarcodeButton?.addEventListener("click", startBarcodeScanner);
+els.stopBarcodeButton?.addEventListener("click", () => stopBarcodeScanner());
+fields.barcode?.addEventListener("change", () => lookupBarcode(fields.barcode.value));
 
 document.querySelectorAll("[data-close-dialog]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -1213,6 +1198,22 @@ els.loadForm.addEventListener("submit", async (event) => {
   await refresh();
 });
 
+fields.crealityBrand.addEventListener("change", async () => {
+  setGenericBrandVisibility();
+  await populateSpoolTypeOptions();
+  await populateSpoolNameOptions();
+});
+
+fields.material.addEventListener("change", async () => {
+  await populateSpoolNameOptions();
+});
+
+fields.crealityName.addEventListener("change", () => {
+  fields.crealityFilamentId.value = fields.crealityName.value;
+});
+
+fields.colorName.addEventListener("change", updateColorSwatchFromSelection);
+
 fields.status.addEventListener("change", () => {
   fields.location.value = defaultLocationForStatus(fields.status.value);
 });
@@ -1234,3 +1235,4 @@ setupCardMenus();
 refresh().catch((error) => {
   document.body.innerHTML = `<main><div class="empty-state">${escapeHtml(error.message)}</div></main>`;
 });
+schedulePageRefresh();

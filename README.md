@@ -1,36 +1,40 @@
-# Filament Inventory
+# Filament Inventory V2
 
-A local web app for tracking 3D printer filament across a Creality K2 Plus with CFS, open storage/dehumidifier, and sealed stock.
+A local dark-mode web app for tracking filament on a Creality K2 Plus with CFS, external spool holder, dehumidifier/open storage, and sealed stock.
 
-The app runs on your Mac, stores everything in a local SQLite database, and can sync CFS slots plus track filament usage from the printer through the Fluidd/Moonraker-style printer dashboard.
+V2 is built around the way the K2 Plus and Creality Print understand filament: brand, type, profile/name, and color come from the Creality Print filament profile catalog instead of a community spool catalog or barcode database.
 
-## What You Need To Change
+## What V2 Does
 
-If you are setting this up on another Mac, update these items:
+- Tracks each physical spool as a unique inventory item.
+- Uses Creality Print filament profiles for controlled Brand, Type, Name, and Color choices.
+- Syncs CFS Slot 1-4 from the printer through the Fluidd/Moonraker-style dashboard.
+- Syncs the External Spool Holder from the printer too.
+- Automatically marks a spool as loaded when it appears in a printer slot.
+- Automatically moves a spool back to open/dehumidifier storage when it leaves a printer slot.
+- Deducts filament usage from the loaded spool being used by the printer.
+- Supports multicolor prints by using the printer-reported active CFS slot.
+- Provides a `Fluidd` button that opens the printer dashboard from the current Printer IP field.
 
-- Printer address: use your printer dashboard URL, for example `http://192.168.5.237:4408`.
-- Local folder path: update any `/Users/gabriel/Documents/3D Printing Filament Tracking` paths in the macOS LaunchAgent if your folder is somewhere else.
-- Python path: the included LaunchAgent uses `/opt/homebrew/bin/python3.12`; change it if your Python 3.12 is installed elsewhere.
-- App name/LaunchAgent label: optional, but you can rename `com.gsguerra.filament-tracker` if you want your own service name.
-- Database: do not use someone else's `filament_inventory.sqlite3` unless you want their inventory. Delete it before first launch to start fresh.
+## What This Does Not Use
 
-## Features
+- No barcode workflow.
+- No community filament database.
+- No manually loaded CSV/JSON catalog.
 
-- Track material, brand, color, original weight, and remaining weight.
-- Track status: loaded, open, sealed, retired.
-- Track locations: CFS Slot 1-4, external spool holder, dehumidifier, open storage, sealed stock.
-- Sync loaded CFS slots from the K2 Plus printer dashboard.
-- Automatically deduct filament usage from loaded CFS or external holder spools while prints run.
-- Keep individual spools unique when moving between sealed stock, open storage, dehumidifier, CFS, and the external holder.
-- Search/filter inventory and manage spools from a local browser UI.
-- Delete accidentally created spools.
+The source of truth for filament profiles is Creality Print's local profile data on the Mac running the app.
 
 ## Requirements
 
 - macOS
 - Python 3.12
-- K2 Plus and CFS reachable on your local network
-- Fluidd/Moonraker-style printer dashboard reachable from the Mac
+- Creality Print installed locally
+- Creality K2 Plus with CFS
+- Printer dashboard reachable on your local network, usually like:
+
+```text
+http://192.168.5.232:4408
+```
 
 No external Python packages are required; the app uses the Python standard library.
 
@@ -48,29 +52,56 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-If port `8765` is busy, the app will try the next available port up to `8775`.
+If port `8765` is busy, the app tries the next available port up to `8775`.
 
-## First Setup
+## First Setup For Another K2 Plus Owner
 
-1. Start the app.
-2. Open the local app URL in your browser.
-3. In `K2 Plus CFS Sync`, enter your printer dashboard address.
-4. Click `Test` to confirm the printer is reachable.
-5. Click `Sync CFS` to pull the currently loaded CFS slots into the app.
-6. Add your sealed and open inventory manually.
-7. Correct the remaining weight of each CFS spool once, then let automatic tracking deduct future print usage.
+If you share this repo with a friend, they should update these items:
 
-## Printer Address
+- `Printer IP`: enter their own printer dashboard address in the app header.
+- `Creality Print`: install Creality Print so the app can read the local filament profile catalog.
+- `LaunchAgent paths`: update any `/Users/gabriel/Documents/3D Printing Filament Tracking` paths if their folder is elsewhere.
+- `Python path`: the included LaunchAgent uses `/opt/homebrew/bin/python3.12`; change it if their Python 3.12 is installed elsewhere.
+- `Database`: delete `filament_inventory.sqlite3` before first launch if they want a blank inventory instead of this machine's current spool data.
 
-Use the address for your printer dashboard, not the local app address.
+## Printer IP And Fluidd
 
-Example:
+The Printer IP field is the shared source for:
+
+- CFS sync
+- External holder sync
+- usage tracking
+- the `Fluidd` dashboard button
+
+You can enter either:
 
 ```text
-http://192.168.5.237:4408
+192.168.5.232
 ```
 
-Your friend will almost certainly need to replace this with their printer's IP address.
+or:
+
+```text
+http://192.168.5.232:4408
+```
+
+The Fluidd button opens the dashboard at:
+
+```text
+http://<printer-ip>:4408/#/
+```
+
+If Wi-Fi power-cycles and the printer IP changes, update the Printer IP field, then run a printer action such as `Sync CFS` or `Check Usage` once. The app then uses that new address for automatic tracking.
+
+## Daily Workflow
+
+1. Add each physical spool once.
+2. Choose Brand, Type, Name, and Color from the Creality profile-based dropdowns.
+3. Correct the remaining grams when needed.
+4. Let the app sync CFS/external holder changes from the printer.
+5. Let automatic usage tracking deduct grams from the loaded spool.
+
+When a printer slot changes, the app tries to match an existing inventory spool by exact Creality profile plus color. If it cannot safely prove the match, it creates a new printer-synced spool rather than corrupting an existing one.
 
 ## Auto Start On macOS
 
@@ -86,8 +117,8 @@ Before installing it, edit these paths inside the plist:
 /opt/homebrew/bin/python3.12
 /Users/gabriel/Documents/3D Printing Filament Tracking/app.py
 /Users/gabriel/Documents/3D Printing Filament Tracking
-/Users/gabriel/Documents/3D Printing Filament Tracking/logs/filament-tracker.out.log
-/Users/gabriel/Documents/3D Printing Filament Tracking/logs/filament-tracker.err.log
+/Users/gabriel/Library/Logs/FilamentTracker/filament-tracker.out.log
+/Users/gabriel/Library/Logs/FilamentTracker/filament-tracker.err.log
 ```
 
 Then copy it into your LaunchAgents folder:
@@ -118,7 +149,7 @@ Inventory data is stored locally in:
 filament_inventory.sqlite3
 ```
 
-This file contains your actual spool inventory and usage history. It is not a generic starter file.
+This file contains actual spool inventory and usage history. It is not a generic starter file.
 
 To start with a blank inventory:
 
@@ -126,21 +157,14 @@ To start with a blank inventory:
 2. Move or delete `filament_inventory.sqlite3`.
 3. Start the app again.
 
-The app will recreate the database with the standard locations.
-
-## Important Workflow Notes
-
-- If you load a sealed spool into the CFS, first mark or move that existing spool in the app instead of creating a new one.
-- If a CFS sync sees an already loaded spool, it should preserve that unique spool rather than creating a duplicate.
-- When replacing CFS filament, update the inventory location/status first, then sync the CFS.
-- After manually correcting the remaining grams for a loaded spool, automatic tracking uses that number as the baseline for future deductions.
+The app recreates the database with standard locations.
 
 ## Files
 
-- `app.py`: local web server, SQLite database, printer sync, usage tracking.
+- `app.py`: local web server, SQLite database, Creality profile import, printer sync, usage tracking.
 - `static/index.html`: app layout.
 - `static/app.js`: browser UI behavior.
-- `static/styles.css`: app styling.
+- `static/styles.css`: dark-mode styling.
 - `mac/com.gsguerra.filament-tracker.plist`: optional macOS auto-start service.
 - `Start Filament Tracker.command`: double-click manual starter for macOS.
 - `filament_inventory.sqlite3`: local app data.

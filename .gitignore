@@ -3,3 +3,4 @@ __pycache__/
 .DS_Store
 checkpoints/
 logs/
+filament_inventory.before-*.sqlite3

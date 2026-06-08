@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Filament Inventory</title>
-    <link rel="stylesheet" href="/styles.css?v=load-flow-9" />
+    <link rel="stylesheet" href="/styles.css?v=fluidd-link-1" />
   </head>
   <body>
     <header class="topbar">
@@ -17,6 +17,7 @@
           Printer IP
           <input id="printerUrlInput" placeholder="192.168.5.232" />
         </label>
+        <button class="primary fluidd-button" id="fluiddButton" type="button">Fluidd</button>
         <button class="primary" id="addSpoolButton" type="button">
           <span class="button-icon">+</span>
           Add Spool
@@ -131,46 +132,33 @@
           <button class="icon-button" type="button" data-close-dialog aria-label="Close">x</button>
         </div>
         <input type="hidden" id="spoolId" />
+        <input type="hidden" id="crealityFilamentIdInput" />
+        <input type="hidden" id="barcodeInput" />
         <div class="form-grid">
-          <div class="barcode-entry full">
-            <label>
-              Barcode
-              <input id="barcodeInput" name="barcode" placeholder="Scan or type the box barcode" />
-            </label>
-            <button class="secondary" id="scanBarcodeButton" type="button">Scan Barcode</button>
-          </div>
-          <div class="scanner-status full" id="barcodeStatus" aria-live="polite"></div>
-          <div class="barcode-scanner full" id="barcodeScanner" hidden>
-            <video id="barcodeVideo" playsinline muted></video>
-            <button class="secondary" id="stopBarcodeButton" type="button">Stop Camera</button>
-          </div>
-          <label>
-            Material
-            <input id="materialInput" name="material" list="materials" required placeholder="PLA" />
-            <datalist id="materials">
-              <option value="PLA"></option>
-              <option value="PLA+"></option>
-              <option value="PETG"></option>
-              <option value="ABS"></option>
-              <option value="ASA"></option>
-              <option value="TPU"></option>
-              <option value="PC"></option>
-              <option value="Nylon"></option>
-            </datalist>
-          </label>
           <label>
             Brand
-            <input id="brandInput" name="brand" required placeholder="Bambu Lab" />
+            <select id="crealityBrandInput" required></select>
+          </label>
+          <label id="genericBrandField" hidden>
+            Spool label brand
+            <input id="brandInput" name="brand" required placeholder="Overture, SUNLU, Duramic..." />
+          </label>
+          <label>
+            Type
+            <select id="materialInput" name="material" required></select>
+          </label>
+          <label>
+            Name
+            <select id="crealityNameInput" required></select>
           </label>
           <label>
             Color
-            <input id="colorNameInput" name="color_name" required placeholder="Matte Black" />
+            <select id="colorNameInput" name="color_name" required></select>
           </label>
           <label>
             Swatch
             <input id="colorHexInput" name="color_hex" type="color" value="#333333" />
           </label>
-          <div class="catalog-results full" id="catalogResults"></div>
           <label>
             Status
             <select id="statusInput" name="status">
@@ -292,6 +280,6 @@
       </article>
     </template>
 
-    <script src="/app.js?v=load-flow-9"></script>
+    <script src="/app.js?v=fluidd-link-1"></script>
   </body>
 </html>

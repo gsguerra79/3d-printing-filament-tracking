@@ -1,17 +1,23 @@
 :root {
-  color-scheme: light;
-  --bg: #f6f5f1;
-  --ink: #202124;
-  --muted: #686b70;
-  --line: #d9d5cd;
-  --surface: #ffffff;
-  --surface-strong: #eef4f2;
-  --accent: #166c68;
-  --accent-dark: #0f4c49;
-  --warning: #a45c18;
-  --danger: #aa3636;
-  --low: #b94747;
-  --ok: #28785d;
+  color-scheme: dark;
+  --bg: #101112;
+  --ink: #f1f4ef;
+  --muted: #a4aca4;
+  --line: #33383a;
+  --surface: #191c1e;
+  --surface-strong: #202629;
+  --surface-soft: #25292b;
+  --card-surface: #24282a;
+  --card-surface-strong: #2b3032;
+  --accent: #37a388;
+  --accent-dark: #2c806d;
+  --fluidd: #4a90e2;
+  --fluidd-dark: #3777bf;
+  --warning: #d79645;
+  --danger: #ff6b6b;
+  --low: #e05252;
+  --amber: #d99a3d;
+  --ok: #55b881;
   --radius: 8px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -23,7 +29,9 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 14% -10%, rgba(55, 163, 136, 0.16), transparent 34rem),
+    linear-gradient(180deg, #121415 0%, var(--bg) 28rem);
   color: var(--ink);
 }
 
@@ -48,7 +56,7 @@ button {
   justify-content: space-between;
   gap: 24px;
   padding: 22px clamp(16px, 4vw, 48px);
-  background: rgba(246, 245, 241, 0.94);
+  background: rgba(16, 17, 18, 0.92);
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(12px);
 }
@@ -109,16 +117,26 @@ main {
 
 .primary {
   background: var(--accent);
-  color: #fff;
+  color: #07110f;
 }
 
 .primary:hover {
   background: var(--accent-dark);
 }
 
+.fluidd-button {
+  background: var(--fluidd);
+  color: #07111f;
+}
+
+.fluidd-button:hover {
+  background: var(--fluidd-dark);
+}
+
 .secondary {
-  background: #e8e4dc;
+  background: var(--surface-soft);
   color: var(--ink);
+  border: 1px solid var(--line);
 }
 
 .button-icon {
@@ -147,7 +165,7 @@ dialog {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 1px 0 rgba(32, 33, 36, 0.04);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16);
 }
 
 .metrics article {
@@ -211,7 +229,7 @@ dialog {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #f8f6f0;
+  background: var(--surface-soft);
 }
 
 .barcode-scanner[hidden] {
@@ -228,59 +246,6 @@ dialog {
 }
 
 .scanner-status {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.catalog-results {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 8px;
-  max-height: 240px;
-  overflow: auto;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: #f8f6f0;
-}
-
-.catalog-result {
-  display: grid;
-  grid-template-columns: 28px 1fr;
-  gap: 9px;
-  align-items: center;
-  min-height: 48px;
-  padding: 8px;
-  border-radius: var(--radius);
-  background: #fff;
-  color: var(--ink);
-  text-align: left;
-}
-
-.catalog-result:hover {
-  background: #edf4f2;
-}
-
-.catalog-result small {
-  display: block;
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 750;
-  overflow-wrap: anywhere;
-}
-
-.catalog-swatch {
-  width: 28px;
-  height: 28px;
-  border: 1px solid rgba(0, 0, 0, 0.22);
-  border-radius: 50%;
-}
-
-.catalog-help {
-  grid-column: 1 / -1;
-  padding: 12px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
@@ -311,7 +276,7 @@ dialog {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #f7f5ef;
+  background: #111314;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
@@ -333,7 +298,7 @@ textarea {
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #fff;
+  background: #111314;
   color: var(--ink);
   padding: 8px 10px;
 }
@@ -447,7 +412,7 @@ main > .cfs-panel {
   display: grid;
   min-height: 106px;
   place-items: center;
-  border: 1px dashed #b7b1a7;
+  border: 1px dashed #4a5052;
   border-radius: var(--radius);
   color: var(--muted);
   font-weight: 800;
@@ -470,7 +435,11 @@ main > .cfs-panel {
   padding: 14px 46px 14px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--card-surface);
+}
+
+.slot .spool-card {
+  background: var(--card-surface-strong);
 }
 
 .spool-main {
@@ -486,9 +455,9 @@ main > .cfs-panel {
   place-items: center;
   width: 42px;
   height: 42px;
-  border: 1px solid rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 50%;
-  box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.45);
 }
 
 .swatch-label {
@@ -512,7 +481,7 @@ main > .cfs-panel {
   margin-top: 4px;
   color: var(--muted);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .weight-row {
@@ -523,7 +492,7 @@ main > .cfs-panel {
 .weight-label {
   color: var(--muted);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .bar {
@@ -532,7 +501,7 @@ main > .cfs-panel {
   height: 9px;
   overflow: hidden;
   border-radius: 999px;
-  background: #ebe7de;
+  background: #2d3234;
 }
 
 .bar span {
@@ -543,7 +512,15 @@ main > .cfs-panel {
   background: var(--ok);
 }
 
-.spool-card.low .bar span {
+.spool-card.bar-green .bar span {
+  background: var(--ok);
+}
+
+.spool-card.bar-amber .bar span {
+  background: var(--amber);
+}
+
+.spool-card.bar-red .bar span {
   background: var(--low);
 }
 
@@ -663,31 +640,31 @@ main > .cfs-panel {
   max-width: 100%;
   padding: 5px 8px;
   border-radius: 999px;
-  background: #eee9df;
-  color: #4f4d49;
+  background: #2a2f31;
+  color: #d6ddd6;
   font-size: 12px;
-  font-weight: 850;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
 .tag.loaded {
-  background: #dbefec;
-  color: #0f5a55;
+  background: rgba(55, 163, 136, 0.18);
+  color: #8ee0c5;
 }
 
 .tag.open {
-  background: #f4e6d3;
-  color: #7d4818;
+  background: rgba(215, 150, 69, 0.18);
+  color: #f0be76;
 }
 
 .tag.sealed {
-  background: #e5e8ef;
-  color: #3f4d6a;
+  background: rgba(149, 161, 171, 0.18);
+  color: #d6dde3;
 }
 
 .tag.retired {
-  background: #f1dddd;
-  color: #8b3030;
+  background: rgba(255, 107, 107, 0.17);
+  color: #ff9b9b;
 }
 
 .card-menu {
@@ -703,7 +680,7 @@ main > .cfs-panel {
   height: 24px;
   place-items: center;
   border-radius: 999px;
-  background: #f0eee8;
+  background: #2a2f31;
   color: var(--ink);
   cursor: pointer;
   list-style: none;
@@ -723,7 +700,7 @@ main > .cfs-panel {
 }
 
 .card-menu summary:hover {
-  background: #e3ded4;
+  background: #353b3e;
 }
 
 .card-actions {
@@ -736,8 +713,8 @@ main > .cfs-panel {
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #fff;
-  box-shadow: 0 10px 24px rgba(32, 33, 36, 0.14);
+  background: #171a1b;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.36);
 }
 
 .card-actions button {
@@ -745,22 +722,22 @@ main > .cfs-panel {
   justify-content: flex-start;
   min-height: 32px;
   padding: 0 8px;
-  background: #f0eee8;
+  background: #262b2d;
   color: var(--ink);
   font-size: 13px;
 }
 
 .card-actions button:hover {
-  background: #e3ded4;
+  background: #353b3e;
 }
 
 .card-actions button.danger {
-  background: #f1dddd;
+  background: rgba(255, 107, 107, 0.14);
   color: var(--danger);
 }
 
 .card-actions button.danger:hover {
-  background: #ead0d0;
+  background: rgba(255, 107, 107, 0.24);
 }
 
 .usage-list {
@@ -785,7 +762,7 @@ main > .cfs-panel {
   height: 14px;
   margin-top: 3px;
   border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .usage-title {
@@ -796,14 +773,14 @@ main > .cfs-panel {
 .usage-date {
   color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .empty-state {
   display: grid;
   min-height: 132px;
   place-items: center;
-  border: 1px dashed #b7b1a7;
+  border: 1px dashed #4a5052;
   border-radius: var(--radius);
   color: var(--muted);
   font-weight: 850;
@@ -817,7 +794,7 @@ dialog {
 }
 
 dialog::backdrop {
-  background: rgba(32, 33, 36, 0.48);
+  background: rgba(0, 0, 0, 0.68);
 }
 
 dialog form {
@@ -846,7 +823,7 @@ dialog form {
   height: 34px;
   place-items: center;
   border-radius: 50%;
-  background: #eee9df;
+  background: #2a2f31;
   color: var(--ink);
   font-weight: 900;
 }
@@ -868,7 +845,7 @@ dialog form {
 .selected-spool {
   margin-bottom: 12px;
   color: var(--muted);
-  font-weight: 800;
+  font-weight: 400;
 }
 
 @media (max-width: 880px) {
