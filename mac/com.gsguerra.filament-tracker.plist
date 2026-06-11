@@ -9,11 +9,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/python3.12</string>
-    <string>/Users/gabriel/Projects/3D Printing Filament Tracking/app.py</string>
+    <string>/Users/gabriel/Documents/3D Printing Filament Tracking/app.py</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/gabriel/Projects/3D Printing Filament Tracking</string>
+  <string>/Users/gabriel/Documents/3D Printing Filament Tracking</string>
 
   <key>RunAtLoad</key>
   <true/>

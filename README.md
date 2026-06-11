@@ -60,7 +60,7 @@ If you share this repo with a friend, they should update these items:
 
 - `Printer IP`: enter their own printer dashboard address in the app header.
 - `Creality Print`: install Creality Print so the app can read the local filament profile catalog.
-- `LaunchAgent paths`: update any `/Users/gabriel/Projects/3D Printing Filament Tracking` paths if their folder is elsewhere.
+- `LaunchAgent paths`: update any `/Users/gabriel/Documents/3D Printing Filament Tracking` paths if their folder is elsewhere.
 - `Python path`: the included LaunchAgent uses `/opt/homebrew/bin/python3.12`; change it if their Python 3.12 is installed elsewhere.
 - `Database`: delete `filament_inventory.sqlite3` before first launch if they want a blank inventory instead of this machine's current spool data.
 
@@ -115,8 +115,8 @@ Before installing it, edit these paths inside the plist:
 
 ```text
 /opt/homebrew/bin/python3.12
-/Users/gabriel/Projects/3D Printing Filament Tracking/app.py
-/Users/gabriel/Projects/3D Printing Filament Tracking
+/Users/gabriel/Documents/3D Printing Filament Tracking/app.py
+/Users/gabriel/Documents/3D Printing Filament Tracking
 /Users/gabriel/Library/Logs/FilamentTracker/filament-tracker.out.log
 /Users/gabriel/Library/Logs/FilamentTracker/filament-tracker.err.log
 ```
