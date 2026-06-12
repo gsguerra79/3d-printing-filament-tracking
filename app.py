@@ -1379,6 +1379,7 @@ def upsert_synced_slots(slots: list[dict]) -> int:
         dehumidifier_id = dehumidifier_location_id(con)
         seen_location_ids = set()
         touched = 0
+        unmatched_slots = []
         for slot in slots:
             if slot.get("location_name"):
                 location = con.execute(
@@ -1416,25 +1417,10 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                 }
             payload = normalize_spool_payload({**slot, "location_id": location_id, "notes": note})
 
-            existing = currently_loaded if spool_matches_profile(currently_loaded, profile, payload) else None
-            if currently_loaded and not existing:
-                con.execute(
-                    """
-                    UPDATE spools
-                    SET status = 'open',
-                        location_id = ?,
-                        cfs_slot_name = NULL,
-                        opened_at = COALESCE(opened_at, ?),
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        dehumidifier_id,
-                        datetime.now().date().isoformat(),
-                        now_iso(),
-                        currently_loaded["id"],
-                    ),
-                )
+            # A user-loaded spool is the stronger source of truth for inventory identity.
+            # Printer generic/RFID data can name the slot, but it must not replace the
+            # physical spool the user already put there.
+            existing = currently_loaded
             if not existing:
                 existing = find_spool_for_slot(con, payload, profile, location_id)
 
@@ -1487,41 +1473,14 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                 )
                 enforce_single_loaded_spool(con, location_id, existing["id"])
             else:
-                created = now_iso()
-                cur = con.execute(
-                    """
-                    INSERT INTO spools (
-                        material, brand, color_name, color_hex, diameter,
-                        original_weight_g, remaining_weight_g, status, location_id,
-                        cfs_slot_name, opened_at, notes, creality_filament_id,
-                        creality_brand, creality_type, creality_name, cfs_material_code,
-                        cfs_color_code, created_at, updated_at
+                unmatched_slots.append(
+                    slot.get("raw", {}).get("slot_name")
+                    or (
+                        f"Slot {slot['slot_index'] + 1}"
+                        if slot.get("slot_index") is not None
+                        else slot.get("location_name", "External")
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'loaded', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        payload["material"],
-                        payload["brand"],
-                        payload["color_name"],
-                        payload["color_hex"],
-                        payload["diameter"],
-                        payload["original_weight_g"],
-                        payload["remaining_weight_g"],
-                        location_id,
-                        slot.get("raw", {}).get("slot_name") or f"Slot {slot['slot_index'] + 1}",
-                        datetime.now().date().isoformat(),
-                        payload["notes"],
-                        payload["creality_filament_id"],
-                        payload["creality_brand"],
-                        payload["creality_type"],
-                        payload["creality_name"],
-                        payload["cfs_material_code"],
-                        payload["cfs_color_code"],
-                        created,
-                        created,
-                    ),
                 )
-                enforce_single_loaded_spool(con, location_id, cur.lastrowid)
             touched += 1
 
         if seen_location_ids:
@@ -1539,6 +1498,11 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                   AND location_id NOT IN ({placeholders})
                 """,
                 (dehumidifier_id, now_iso(), *seen_location_ids),
+            )
+        if unmatched_slots:
+            set_setting(
+                "slot_sync_last_message",
+                f"Printer sync found unmatched slot(s): {', '.join(unmatched_slots)}. No spools were auto-created.",
             )
     return touched
 
