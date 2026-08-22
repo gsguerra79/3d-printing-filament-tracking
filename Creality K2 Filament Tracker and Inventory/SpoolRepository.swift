@@ -374,11 +374,33 @@ final class SpoolRepository {
         }
     }
 
+    /// Whenever a spool transitions to `.retired` here, it also gets moved
+    /// out of wherever it physically was (a CFS slot, the external holder,
+    /// etc.) into the "Retired / Empty" bucket location, and its
+    /// `cfs_slot_name` is cleared. A retired spool has nothing left in it,
+    /// so it shouldn't keep showing up as if it's still loaded in a
+    /// printer slot while simultaneously appearing in retired storage --
+    /// this keeps status and location consistent with each other in one
+    /// place, regardless of what calls this (today: nothing does, since
+    /// usage tracking deliberately never auto-retires; this matters once a
+    /// manual "retire/replace this spool" action exists).
     func updateSpoolAfterUsage(spoolId: Int64, remainingWeightG: Int, status: Spool.Status, updatedAtISO: String) throws {
-        try db.run(
-            "UPDATE spools SET remaining_weight_g = ?, status = ?, updated_at = ? WHERE id = ?",
-            bind: [remainingWeightG, status.rawValue, updatedAtISO, spoolId]
-        )
+        if status == .retired {
+            let retiredLocationId = try fetchLocations().first(where: { $0.kind == .retired })?.id
+            try db.run(
+                """
+                UPDATE spools
+                SET remaining_weight_g = ?, status = ?, location_id = ?, cfs_slot_name = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                bind: [remainingWeightG, status.rawValue, retiredLocationId, updatedAtISO, spoolId]
+            )
+        } else {
+            try db.run(
+                "UPDATE spools SET remaining_weight_g = ?, status = ?, updated_at = ? WHERE id = ?",
+                bind: [remainingWeightG, status.rawValue, updatedAtISO, spoolId]
+            )
+        }
     }
 
     func recordPendingUsage(
