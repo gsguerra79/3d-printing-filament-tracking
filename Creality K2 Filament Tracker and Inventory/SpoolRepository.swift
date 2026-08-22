@@ -148,6 +148,59 @@ final class SpoolRepository {
         return count
     }
 
+    /// Re-scans the Creality Print app's bundled filament profiles and
+    /// upserts them into `creality_filaments`. Mirrors the Python app's
+    /// `import_creality_filaments()`: existing rows whose `source_key` is no
+    /// longer present get deleted (a profile Creality Print removed), rows
+    /// that still match get updated in place (so ids/foreign keys from
+    /// spools stay valid), and three settings keys are recorded so the UI
+    /// can show when/where the catalog last came from. Returns the number
+    /// of profiles found (0 if Creality Print isn't installed).
+    @discardableResult
+    func refreshCrealityFilaments() throws -> Int {
+        let records = CrealityProfileImporter.sourceRecords()
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+
+        if !records.isEmpty {
+            let placeholders = records.map { _ in "?" }.joined(separator: ",")
+            try db.run(
+                "DELETE FROM creality_filaments WHERE source_key NOT IN (\(placeholders))",
+                bind: records.map { $0.sourceKey as SQLiteBindable }
+            )
+        }
+
+        for record in records {
+            try db.run(
+                """
+                INSERT INTO creality_filaments (
+                    source_key, filament_id, brand, type, name, cfs_material_code,
+                    source_path, raw_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_key) DO UPDATE SET
+                    filament_id = excluded.filament_id,
+                    brand = excluded.brand,
+                    type = excluded.type,
+                    name = excluded.name,
+                    cfs_material_code = excluded.cfs_material_code,
+                    source_path = excluded.source_path,
+                    raw_json = excluded.raw_json,
+                    updated_at = excluded.updated_at
+                """,
+                bind: [
+                    record.sourceKey, record.filamentId, record.brand, record.type, record.name,
+                    record.cfsMaterialCode, record.sourcePath, record.rawJSON, timestamp, timestamp,
+                ]
+            )
+        }
+
+        try setSetting("creality_catalog_updated_at", timestamp)
+        try setSetting("creality_catalog_count", String(records.count))
+        try setSetting("creality_catalog_path", CrealityProfileImporter.resourcesRoot.path)
+
+        return records.count
+    }
+
     // MARK: - Printer sync
 
     func fetchLoadedSpool(atLocationId locationId: Int64) throws -> Spool? {
@@ -379,7 +432,7 @@ final class SpoolRepository {
     /// etc.) into the "Retired / Empty" bucket location, and its
     /// `cfs_slot_name` is cleared. A retired spool has nothing left in it,
     /// so it shouldn't keep showing up as if it's still loaded in a
-    /// printer slot while simultaneously appearing in retired storage --
+    /// printer slot while simultaneously appearing in retired storage —
     /// this keeps status and location consistent with each other in one
     /// place, regardless of what calls this (today: nothing does, since
     /// usage tracking deliberately never auto-retires; this matters once a

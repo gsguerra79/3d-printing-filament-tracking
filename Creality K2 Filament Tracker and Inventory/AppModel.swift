@@ -3,7 +3,8 @@
 //  Creality K2 Filament Tracker and Inventory
 //
 //  Central observable state for the app: owns the database connection and
-//  publishes the data SwiftUI views read.
+//  publishes the data SwiftUI views read. Printer sync (websocket listener)
+//  will hang off this same object in a later step.
 //
 
 import Foundation
@@ -18,6 +19,7 @@ final class AppModel {
     var loadError: String?
     var migrationNote: String?
     var printerAddressDraft: String = ""
+    var crealityCatalogMessage: String?
 
     let repository: SpoolRepository?
     private(set) var printerSync: PrinterSyncEngine?
@@ -40,8 +42,38 @@ final class AppModel {
             self.printerSync = sync
         }
 
+        importCrealityCatalogIfNeeded()
         reload()
         connectToPrinterIfConfigured()
+    }
+
+    /// First-launch convenience: if the catalog table is still empty (fresh
+    /// install, or a migrated database that predates this feature), scan
+    /// Creality Print's bundled profiles once automatically so brand/type
+    /// pickers aren't empty before the user thinks to hit "refresh". Mirrors
+    /// the old Python app's "import on empty table" behavior in initDb().
+    private func importCrealityCatalogIfNeeded() {
+        guard let repository else { return }
+        guard (try? repository.crealityFilamentCount()) == 0 else { return }
+        refreshCrealityCatalog()
+    }
+
+    /// Re-scans Creality Print's bundled filament profiles and upserts them
+    /// into the catalog table. Safe to call repeatedly (e.g. from a toolbar
+    /// button) — it's a full re-sync, not an additive import.
+    func refreshCrealityCatalog() {
+        guard let repository else { return }
+        do {
+            let imported = try repository.refreshCrealityFilaments()
+            if imported == 0 {
+                crealityCatalogMessage = "No Creality Print profiles found — is Creality Print installed?"
+            } else {
+                crealityCatalogMessage = "Imported \(imported) Creality filament profile\(imported == 1 ? "" : "s")."
+            }
+            settings = (try? repository.fetchSettings()) ?? settings
+        } catch {
+            crealityCatalogMessage = "Catalog refresh failed: \(error.localizedDescription)"
+        }
     }
 
     func reload() {

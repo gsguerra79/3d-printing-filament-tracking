@@ -2,8 +2,10 @@
 //  ContentView.swift
 //  Creality K2 Filament Tracker and Inventory
 //
-//  Main window: a read-only table of the spool inventory grouped by
-//  status, plus live printer connection status and address controls.
+//  First pass at the main window: a read-only table of the real spool
+//  inventory (migrated from the old Python app's database) grouped by
+//  status, so we can confirm the data layer works end-to-end before
+//  layering on editing, Creality profile pickers, and printer sync.
 //
 
 import SwiftUI
@@ -52,6 +54,27 @@ struct ContentView: View {
                             .multilineTextAlignment(.center)
                             .textSelection(.enabled)
                             .padding(.top, 4)
+                    }
+                }
+
+                Divider()
+
+                VStack(spacing: 8) {
+                    Button {
+                        model.refreshCrealityCatalog()
+                    } label: {
+                        Label("Refresh Creality Catalog", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    if let count = model.settings["creality_catalog_count"] {
+                        Text("\(count) Creality filament profiles on file")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let message = model.crealityCatalogMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
                 }
 
