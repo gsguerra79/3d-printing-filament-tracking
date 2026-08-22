@@ -204,6 +204,12 @@ final class SpoolRepository {
 
         var seenLocationIds: Set<Int64> = []
         var unmatchedSlotNames: [String] = []
+        // New: unlike the old app, which never compared printer-reported
+        // identity against a spool already on file once it trusted that
+        // spool, this flags disagreement without ever acting on it -- the
+        // database still always wins, this just tells you when it might
+        // be wrong so you can go check.
+        var conflictNotes: [String] = []
         let now = ISO8601DateFormatter().string(from: Date())
 
         func sync(_ slot: ParsedCFSSlot, locationId: Int64) throws {
@@ -216,6 +222,9 @@ final class SpoolRepository {
                 // matched to this slot. Safe to call on every sync poll —
                 // it's a no-op once there's nothing pending for the slot.
                 try reconcilePendingUsage(forSpoolId: existing.id, slotName: slot.slotName)
+                if let conflict = conflictDescription(slot: slot, existing: existing) {
+                    conflictNotes.append(conflict)
+                }
             } else {
                 unmatchedSlotNames.append(slot.slotName)
             }
@@ -236,6 +245,8 @@ final class SpoolRepository {
         let message: String
         if !unmatchedSlotNames.isEmpty {
             message = "Printer sync found unmatched slot(s): \(unmatchedSlotNames.joined(separator: ", ")). No spools were auto-created."
+        } else if !conflictNotes.isEmpty {
+            message = "Printer sync found possible mismatch(es): \(conflictNotes.joined(separator: " "))"
         } else if seenLocationIds.isEmpty {
             message = "Printer connected; nothing currently loaded."
         } else {
@@ -244,6 +255,33 @@ final class SpoolRepository {
         try setSetting("slot_sync_last_message", message)
         try setSetting("slot_sync_last_checked", now)
         return message
+    }
+
+    /// Compares the printer's reported material/color code for a slot
+    /// against the spool already on file there. Purely informational —
+    /// never changes any data, since we deliberately never let printer
+    /// RFID/material data override the manually-loaded spool the user put
+    /// there. Only flags when both sides actually have a code to compare
+    /// (missing/blank codes on either side are common and not a mismatch).
+    private func conflictDescription(slot: ParsedCFSSlot, existing: Spool) -> String? {
+        let printerMaterial = slot.cfsMaterialCode.trimmingCharacters(in: .whitespaces)
+        let printerColor = slot.cfsColorCode.trimmingCharacters(in: .whitespaces)
+        let spoolMaterial = (existing.cfsMaterialCode ?? "").trimmingCharacters(in: .whitespaces)
+        let spoolColor = (existing.cfsColorCode ?? "").trimmingCharacters(in: .whitespaces)
+
+        let materialMismatch = !printerMaterial.isEmpty && !spoolMaterial.isEmpty
+            && printerMaterial.caseInsensitiveCompare(spoolMaterial) != .orderedSame
+        let colorMismatch = !printerColor.isEmpty && !spoolColor.isEmpty
+            && printerColor.caseInsensitiveCompare(spoolColor) != .orderedSame
+        guard materialMismatch || colorMismatch else { return nil }
+
+        let printerDescription = [slot.material, slot.colorName]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let spoolDescription = "\(existing.brand) \(existing.colorName)"
+        return "\(slot.slotName): printer reports " +
+            "\(printerDescription.isEmpty ? "different filament" : printerDescription), " +
+            "inventory has \(spoolDescription) — verify what's physically loaded."
     }
 
     // MARK: - Usage tracking
