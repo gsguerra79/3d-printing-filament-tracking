@@ -56,9 +56,20 @@ final class UsageTrackingEngine {
     @discardableResult
     func apply(snapshot: PrintUsageSnapshot, reset: Bool = false) throws -> UsageApplyResult {
         guard !snapshot.signature.isEmpty else {
-            try repository.setSetting("usage_monitor_last_message", "No active or recent print found.")
+            // Temporary diagnostic detail (2026-08-22): this printer's
+            // firmware may not expose print_stats/virtual_sdcard the way
+            // stock Klipper does, so surface exactly what we did see instead
+            // of guessing. Remove the parenthetical once usage tracking is
+            // confirmed working against a real print.
+            let diagnostic = "(print_stats key: \(snapshot.hasPrintStatsKey), " +
+                "virtual_sdcard key: \(snapshot.hasVirtualSDCardKey), " +
+                "state=\"\(snapshot.state)\" filename=\"\(snapshot.filename)\" " +
+                "progress=\(snapshot.progress) plannedTotalG=\(snapshot.plannedTotalGrams) " +
+                "usedG=\(snapshot.usedGrams) mm=\(snapshot.filamentUsedMM))"
+            let message = "No active or recent print found. \(diagnostic)"
+            try repository.setSetting("usage_monitor_last_message", message)
             try repository.setSetting("usage_monitor_active_spool_ids", "")
-            return UsageApplyResult(tracked: false, message: "No active or recent print found.")
+            return UsageApplyResult(tracked: false, message: message)
         }
 
         let lastSignature = try repository.getSetting("usage_monitor_signature") ?? ""

@@ -31,6 +31,13 @@ struct PrintUsageSnapshot {
     var basis: String
     var parts: [UsagePart]
     var activeCFSSlotName: String
+    /// Diagnostic only (2026-08-22): whether the merged Moonraker status had
+    /// a "print_stats"/"virtual_sdcard" key at all, distinct from that key
+    /// being present but empty. Helps tell "this printer's firmware doesn't
+    /// expose these objects the way stock Klipper does" apart from "it does,
+    /// but there's genuinely no print running right now."
+    var hasPrintStatsKey: Bool = false
+    var hasVirtualSDCardKey: Bool = false
 }
 
 enum UsageSnapshotParser {
@@ -115,7 +122,9 @@ enum UsageSnapshotParser {
             filamentUsedMM: filamentUsedMM,
             basis: basis,
             parts: parts,
-            activeCFSSlotName: activeCFSSlotName(fromBox: box)
+            activeCFSSlotName: activeCFSSlotName(fromBox: box),
+            hasPrintStatsKey: status["print_stats"] != nil,
+            hasVirtualSDCardKey: status["virtual_sdcard"] != nil
         )
     }
 
