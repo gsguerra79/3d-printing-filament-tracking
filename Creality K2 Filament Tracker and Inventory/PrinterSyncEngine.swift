@@ -4,9 +4,8 @@
 //
 //  Bridges the low-level MoonrakerClient to the inventory: parses each
 //  status push into CFS/external-holder slot data and syncs it into the
-//  database, drives gram-usage tracking off the same pushes, then
-//  republishes a UI-friendly summary of what's currently in the printer
-//  and whether we're even connected.
+//  database, then republishes a UI-friendly summary of what's currently in
+//  the printer and whether we're even connected.
 //
 
 import Foundation
@@ -65,9 +64,7 @@ final class PrinterSyncEngine {
     }
 
     private func handleStatusUpdate(_ status: [String: Any]) {
-        for (key, value) in status {
-            latestStatus[key] = value
-        }
+        Self.deepMerge(status, into: &latestStatus)
         if let box = status["box"] as? [String: Any] {
             latestCFSSlots = CFSStatusParser.parseCFSBox(box)
         }
@@ -104,6 +101,28 @@ final class PrinterSyncEngine {
             }
         } catch {
             lastUsageMessage = "Usage tracking error: \(error.localizedDescription)"
+        }
+    }
+
+    /// Merges a Moonraker status push into the running snapshot field by
+    /// field instead of object by object. This matters because
+    /// `notify_status_update` only includes the *fields that changed* within
+    /// each object, not the whole object every time — e.g. a push touching
+    /// only `print_stats.print_duration` while printing is normal and does
+    /// NOT mean `filename`/`state` are gone. Replacing the whole object on
+    /// every push (the previous behavior) made those fields flicker between
+    /// present and missing on every unrelated field update, which showed up
+    /// as the usage message flapping between real data and "no active print
+    /// found" throughout a live print.
+    private static func deepMerge(_ new: [String: Any], into existing: inout [String: Any]) {
+        for (key, value) in new {
+            if let newDict = value as? [String: Any], let existingDict = existing[key] as? [String: Any] {
+                var merged = existingDict
+                deepMerge(newDict, into: &merged)
+                existing[key] = merged
+            } else {
+                existing[key] = value
+            }
         }
     }
 }
