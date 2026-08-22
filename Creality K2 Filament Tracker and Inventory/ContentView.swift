@@ -91,6 +91,15 @@ struct ContentView: View {
             .padding()
             .frame(maxWidth: 480)
         }
+        // A default WindowGroup sizes itself to fit its content, and
+        // re-derives that size whenever the content's ideal size changes —
+        // so without an explicit floor here, a status message ticking
+        // through different lengths during a live print made the whole
+        // window visibly jitter as it kept auto-resizing. Fixing the status
+        // text to a stable height (see PrinterStatusView) addresses the
+        // root cause; this frame is a second line of defense so the window
+        // itself has a stable size to fall back to.
+        .frame(minWidth: 900, minHeight: 600)
     }
 
     @ViewBuilder

@@ -34,19 +34,26 @@ struct PrinterStatusView: View {
                     .disabled(addressDraft.trimmingCharacters(in: .whitespaces).isEmpty)
             }
 
-            if !lastSyncMessage.isEmpty {
-                Text(lastSyncMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-            }
+            // Always present (never conditionally inserted/removed) and
+            // pinned to a fixed line count via `reservesSpace` — a status
+            // message that pops in/out or grows/shrinks the view as its text
+            // changes length causes the whole window to jitter, since
+            // WindowGroup by default sizes itself to its content. Truncating
+            // instead of reflowing keeps this panel's height constant no
+            // matter what text comes through.
+            Text(lastSyncMessage.isEmpty ? " " : lastSyncMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2, reservesSpace: true)
+                .truncationMode(.tail)
 
-            if !lastUsageMessage.isEmpty {
-                Text(lastUsageMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-            }
+            Text(lastUsageMessage.isEmpty ? " " : lastUsageMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2, reservesSpace: true)
+                .truncationMode(.tail)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
