@@ -31,6 +31,17 @@ final class PrinterSyncEngine {
     /// subscribed object rather than reparsing a single partial push.
     private var latestStatus: [String: Any] = [:]
 
+    /// Usage-tracking pushes can arrive several times a second while
+    /// printing (Moonraker's normal cadence), but a single gram of filament
+    /// takes much longer than that to extrude. Reacting to every push made
+    /// the status message flap rapidly between "no new usage" and
+    /// "accumulating" as sub-gram deltas came and went — correct math, just
+    /// far too chatty a cadence to show. The old Python app polled the
+    /// printer every 10 seconds for exactly this reason; this timer matches
+    /// that cadence instead of driving usage checks off push frequency.
+    private var usageTrackingTimer: Timer?
+    private var hasSeenUsageRelevantPush = false
+
     /// Called after a successful sync so the owning AppModel can reload the
     /// spool list the UI is showing.
     var onInventoryChanged: (() -> Void)?
@@ -53,6 +64,9 @@ final class PrinterSyncEngine {
     func disconnect() {
         client.disconnect()
         connectionState = .disconnected
+        usageTrackingTimer?.invalidate()
+        usageTrackingTimer = nil
+        hasSeenUsageRelevantPush = false
     }
 
     /// Forces the usage tracker to re-baseline against whatever print is
@@ -74,8 +88,24 @@ final class PrinterSyncEngine {
         if !latestCFSSlots.isEmpty || latestExternalSlot != nil {
             syncToInventory()
         }
-        if status["box"] != nil || status["print_stats"] != nil || status["virtual_sdcard"] != nil {
+        if !hasSeenUsageRelevantPush,
+           status["box"] != nil || status["print_stats"] != nil || status["virtual_sdcard"] != nil {
+            // First relevant data: check right away so the baseline/status
+            // message doesn't sit blank for up to 10s after connecting or
+            // after a print starts. Every check after this one runs on the
+            // timer below instead of on every push.
+            hasSeenUsageRelevantPush = true
             applyUsageTracking()
+            startUsageTrackingTimer()
+        }
+    }
+
+    private func startUsageTrackingTimer() {
+        usageTrackingTimer?.invalidate()
+        usageTrackingTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.applyUsageTracking()
+            }
         }
     }
 
