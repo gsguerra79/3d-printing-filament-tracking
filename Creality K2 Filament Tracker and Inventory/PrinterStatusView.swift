@@ -13,6 +13,7 @@ import SwiftUI
 struct PrinterStatusView: View {
     let connectionState: MoonrakerClient.ConnectionState
     let lastSyncMessage: String
+    let lastUsageMessage: String
     @Binding var addressDraft: String
     var onSave: () -> Void
 
@@ -35,6 +36,13 @@ struct PrinterStatusView: View {
 
             if !lastSyncMessage.isEmpty {
                 Text(lastSyncMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+
+            if !lastUsageMessage.isEmpty {
+                Text(lastUsageMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)

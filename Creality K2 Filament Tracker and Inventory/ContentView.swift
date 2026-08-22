@@ -83,6 +83,7 @@ struct ContentView: View {
                 PrinterStatusView(
                     connectionState: model.printerSync?.connectionState ?? .disconnected,
                     lastSyncMessage: model.printerSync?.lastSyncMessage ?? "",
+                    lastUsageMessage: model.printerSync?.lastUsageMessage ?? "",
                     addressDraft: $model.printerAddressDraft,
                     onSave: { model.savePrinterAddressAndReconnect() }
                 )
