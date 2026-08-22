@@ -45,6 +45,14 @@ struct ContentView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                if let note = model.migrationNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                        .padding(.top, 4)
+                }
             }
             .padding()
         }

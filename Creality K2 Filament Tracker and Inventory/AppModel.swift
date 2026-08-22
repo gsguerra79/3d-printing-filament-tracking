@@ -17,6 +17,7 @@ final class AppModel {
     var locations: [Location] = []
     var settings: [String: String] = [:]
     var loadError: String?
+    var migrationNote: String?
 
     let repository: SpoolRepository?
 
@@ -28,6 +29,7 @@ final class AppModel {
             self.repository = nil
             self.loadError = error.localizedDescription
         }
+        migrationNote = FilamentDatabase.lastMigrationResult?.description
         reload()
     }
 

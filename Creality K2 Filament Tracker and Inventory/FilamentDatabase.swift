@@ -32,9 +32,35 @@ enum FilamentDatabaseError: Error, LocalizedError {
     }
 }
 
+/// Outcome of the one-time legacy-database migration, kept around so the UI
+/// can show *why* the inventory is empty instead of just showing zero spools
+/// with no explanation.
+enum LegacyMigrationResult: CustomStringConvertible {
+    case notNeeded(existingPath: String)
+    case noLegacyFileFound(checkedPath: String)
+    case copied(from: String, to: String)
+    case copyFailed(from: String, error: String)
+
+    var description: String {
+        switch self {
+        case .notNeeded(let path):
+            return "Using existing database at \(path); legacy import skipped."
+        case .noLegacyFileFound(let path):
+            return "No legacy database found at \(path). Starting with an empty inventory."
+        case .copied(let from, let to):
+            return "Migrated legacy database from \(from) to \(to)."
+        case .copyFailed(let from, let error):
+            return "Found legacy database at \(from) but could not copy it: \(error). " +
+                "This is very likely macOS blocking file access outside the app sandbox " +
+                "(System Settings > Privacy & Security > Files and Folders, or Full Disk Access)."
+        }
+    }
+}
+
 final class FilamentDatabase {
     private var db: OpaquePointer?
     let path: URL
+    private(set) static var lastMigrationResult: LegacyMigrationResult?
 
     /// Path to the old Python app's database, used only for a one-time
     /// migration on first launch. Update this if the old project folder
@@ -60,7 +86,7 @@ final class FilamentDatabase {
 
     init(path: URL = FilamentDatabase.defaultDatabaseURL()) throws {
         self.path = path
-        try Self.migrateLegacyDatabaseIfNeeded(to: path)
+        Self.lastMigrationResult = Self.migrateLegacyDatabaseIfNeeded(to: path)
 
         if sqlite3_open(path.path, &db) != SQLITE_OK {
             let message = String(cString: sqlite3_errmsg(db))
@@ -74,11 +100,20 @@ final class FilamentDatabase {
         sqlite3_close(db)
     }
 
-    private static func migrateLegacyDatabaseIfNeeded(to newPath: URL) throws {
+    private static func migrateLegacyDatabaseIfNeeded(to newPath: URL) -> LegacyMigrationResult {
         let fm = FileManager.default
-        guard !fm.fileExists(atPath: newPath.path) else { return }
-        guard fm.fileExists(atPath: legacyDatabasePath.path) else { return }
-        try? fm.copyItem(at: legacyDatabasePath, to: newPath)
+        if fm.fileExists(atPath: newPath.path) {
+            return .notNeeded(existingPath: newPath.path)
+        }
+        guard fm.fileExists(atPath: legacyDatabasePath.path) else {
+            return .noLegacyFileFound(checkedPath: legacyDatabasePath.path)
+        }
+        do {
+            try fm.copyItem(at: legacyDatabasePath, to: newPath)
+            return .copied(from: legacyDatabasePath.path, to: newPath.path)
+        } catch {
+            return .copyFailed(from: legacyDatabasePath.path, error: error.localizedDescription)
+        }
     }
 
     // MARK: - Low-level helpers
