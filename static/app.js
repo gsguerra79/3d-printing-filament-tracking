@@ -231,7 +231,10 @@ function renderSelectors() {
 }
 
 function renderMetrics() {
-  const active = state.spools.filter((spool) => spool.status !== "retired");
+  const countableStatuses = new Set(["loaded", "open", "sealed"]);
+  const active = state.spools.filter(
+    (spool) => countableStatuses.has(spool.status) && spool.location_kind !== "retired"
+  );
   const open = active.filter((spool) => spool.status === "open" || spool.status === "loaded");
   const sealed = active.filter((spool) => spool.status === "sealed");
   const low = active.filter((spool) => spool.remaining_weight_g < 200);

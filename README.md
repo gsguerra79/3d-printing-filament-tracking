@@ -14,6 +14,8 @@ V2 is built around the way the K2 Plus and Creality Print understand filament: b
 - Automatically moves a spool back to open/dehumidifier storage when it leaves a printer slot.
 - Deducts filament usage from the loaded spool being used by the printer.
 - Supports multicolor prints by using the printer-reported active CFS slot.
+- Queues usage instead of guessing when the printer reports usage for a slot that has no safely loaded spool.
+- Keeps completed-print cleanup grams on the spool already used for that print, even if the printer's active slot changes after completion.
 - Provides a `Fluidd` button that opens the printer dashboard from the current Printer IP field.
 
 ## What This Does Not Use
@@ -49,10 +51,10 @@ python3.12 app.py
 Then open:
 
 ```text
-http://127.0.0.1:8765
+http://127.0.0.1:8766
 ```
 
-If port `8765` is busy, the app tries the next available port up to `8775`.
+If port `8766` is busy, the app tries `8765` and then the next available port up to `8775`.
 
 ## First Setup For Another K2 Plus Owner
 
@@ -101,7 +103,9 @@ If Wi-Fi power-cycles and the printer IP changes, update the Printer IP field, t
 4. Let the app sync CFS/external holder changes from the printer.
 5. Let automatic usage tracking deduct grams from the loaded spool.
 
-When a printer slot changes, the app tries to match an existing inventory spool by exact Creality profile plus color. If it cannot safely prove the match, it creates a new printer-synced spool rather than corrupting an existing one.
+When a printer slot changes, the app preserves the identity of the spool you loaded. Printer sync can refresh slot/status information, but it does not rewrite the physical spool's Brand, Type, Name, Color, or Creality profile once the spool is loaded. If the printer reports an unmatched slot, the app leaves your inventory alone and reports the unmatched holder instead of guessing.
+
+If usage is reported for a slot that has no safely loaded spool, the app stores that usage as pending. When you manually load the correct spool into that holder, the pending grams are reconciled to that spool.
 
 ## Auto Start On macOS
 

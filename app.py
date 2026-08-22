@@ -108,6 +108,20 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS pending_usage_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slot_name TEXT NOT NULL,
+                signature TEXT NOT NULL,
+                filename TEXT NOT NULL DEFAULT '',
+                grams_pending INTEGER NOT NULL DEFAULT 0,
+                basis TEXT NOT NULL DEFAULT '',
+                state TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(slot_name, signature)
+            );
+
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -549,6 +563,17 @@ def fetch_bootstrap() -> dict:
                 """
             ).fetchall()
         ]
+        pending_usage = [
+            row_to_dict(row)
+            for row in con.execute(
+                """
+                SELECT *
+                FROM pending_usage_events
+                WHERE grams_pending > 0
+                ORDER BY updated_at DESC, id DESC
+                """
+            ).fetchall()
+        ]
         settings = {
             row["key"]: row["value"]
             for row in con.execute("SELECT key, value FROM settings").fetchall()
@@ -560,6 +585,7 @@ def fetch_bootstrap() -> dict:
         "locations": locations,
         "spools": spools,
         "usage": usage,
+        "pending_usage": pending_usage,
         "settings": settings,
         "catalog_count": catalog_count,
     }
@@ -839,10 +865,13 @@ def normalize_spool_payload(data: dict, existing: dict | None = None) -> dict:
     if status in {"open", "loaded"} and not opened_at:
         opened_at = datetime.now().date().isoformat()
     creality_mapping = apply_creality_mapping(data, base)
+    material = clean_text(data.get("material", base.get("material", ""))).upper()
+    if creality_mapping.get("creality_type"):
+        material = clean_text(creality_mapping["creality_type"]).upper()
 
     return {
         "barcode": clean_barcode(data.get("barcode", base.get("barcode", ""))) or None,
-        "material": clean_text(data.get("material", base.get("material", ""))).upper(),
+        "material": material,
         "brand": clean_text(data.get("brand", base.get("brand", ""))),
         "color_name": clean_text(data.get("color_name", base.get("color_name", ""))),
         "color_hex": clean_text(data.get("color_hex", base.get("color_hex", "#888888")), "#888888"),
@@ -903,6 +932,183 @@ def enforce_single_loaded_spool(
             loaded_spool_id,
         ),
     )
+
+
+def cfs_slot_name_for_location_name(location_name: str) -> str:
+    text = clean_text(location_name)
+    if text == "External Spool Holder":
+        return "External"
+    match = re.match(r"^CFS Slot (\d+)$", text)
+    if not match:
+        return ""
+    index = clean_int(match.group(1), 0, 1) - 1
+    if index < 0:
+        return ""
+    tray = (index // 4) + 1
+    letter = "ABCD"[index % 4]
+    return f"T{tray}{letter}"
+
+
+def cfs_slot_name_for_location_id(con: sqlite3.Connection, location_id: int | None) -> str | None:
+    if not location_id:
+        return None
+    row = con.execute(
+        "SELECT name, kind FROM locations WHERE id = ?",
+        (location_id,),
+    ).fetchone()
+    if not row or row["kind"] != "cfs":
+        return None
+    return cfs_slot_name_for_location_name(row["name"]) or None
+
+
+def pending_usage_slot_name(snapshot: dict) -> str:
+    active_slot = clean_text(snapshot.get("active_cfs_slot_name")).upper()
+    if active_slot:
+        return active_slot
+    return "Unknown"
+
+
+def record_pending_usage(snapshot: dict, grams: int, residual_grams: float) -> dict:
+    slot_name = pending_usage_slot_name(snapshot)
+    created = now_iso()
+    with connect() as con:
+        con.execute(
+            """
+            INSERT INTO pending_usage_events (
+                slot_name, signature, filename, grams_pending, basis, state,
+                notes, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(slot_name, signature) DO UPDATE SET
+                grams_pending = grams_pending + excluded.grams_pending,
+                filename = excluded.filename,
+                basis = excluded.basis,
+                state = excluded.state,
+                notes = excluded.notes,
+                updated_at = excluded.updated_at
+            """,
+            (
+                slot_name,
+                snapshot["signature"],
+                snapshot["filename"],
+                grams,
+                snapshot.get("basis", ""),
+                snapshot.get("state", ""),
+                "Queued because no manually loaded spool matched this printer slot.",
+                created,
+                created,
+            ),
+        )
+    message = (
+        f"Queued {grams}g for {slot_name}. Load the correct spool in that holder "
+        "and the app will reconcile it."
+    )
+    set_settings(
+        {
+            "usage_monitor_signature": snapshot["signature"],
+            "usage_monitor_used_grams": f"{snapshot['used_grams']:.4f}",
+            "usage_monitor_residual_grams": f"{residual_grams:.4f}",
+            "usage_monitor_last_message": message,
+            "usage_monitor_last_checked": created,
+            "usage_monitor_active_spool_ids": "",
+        }
+    )
+    return {
+        "tracked": True,
+        "queued": True,
+        "deducted": 0,
+        "queued_grams": grams,
+        "slot_name": slot_name,
+        "pending_grams": residual_grams,
+        "message": message,
+        "snapshot": snapshot,
+    }
+
+
+def reconcile_pending_usage_for_spool(
+    con: sqlite3.Connection,
+    spool_id: int,
+    location_id: int | None,
+) -> int:
+    if not location_id:
+        return 0
+    spool = con.execute(
+        """
+        SELECT s.*, l.name AS location_name, l.kind AS location_kind
+        FROM spools s
+        LEFT JOIN locations l ON l.id = s.location_id
+        WHERE s.id = ?
+        """,
+        (spool_id,),
+    ).fetchone()
+    if not spool or spool["status"] != "loaded" or spool["location_kind"] != "cfs":
+        return 0
+
+    slot_name = clean_text(spool["cfs_slot_name"]).upper() or cfs_slot_name_for_location_name(
+        spool["location_name"]
+    )
+    if not slot_name:
+        return 0
+
+    pending_rows = con.execute(
+        """
+        SELECT *
+        FROM pending_usage_events
+        WHERE slot_name = ?
+          AND grams_pending > 0
+        ORDER BY created_at, id
+        """,
+        (slot_name,),
+    ).fetchall()
+    if not pending_rows:
+        return 0
+
+    created = now_iso()
+    total_grams = sum(clean_int(row["grams_pending"], 0, 0) for row in pending_rows)
+    if total_grams <= 0:
+        return 0
+
+    new_remaining = max(0, spool["remaining_weight_g"] - total_grams)
+    new_status = "loaded" if new_remaining > 0 else "retired"
+    con.execute(
+        """
+        UPDATE spools
+        SET remaining_weight_g = ?, status = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (new_remaining, new_status, created, spool_id),
+    )
+    for row in pending_rows:
+        notes = (
+            "Reconciled pending printer usage after manual load."
+            f" Active holder: {slot_name}."
+            f" Print signature: {row['signature']}."
+        )
+        con.execute(
+            """
+            INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (spool_id, row["grams_pending"], row["filename"], notes, created),
+        )
+    con.execute(
+        "DELETE FROM pending_usage_events WHERE slot_name = ?",
+        (slot_name,),
+    )
+    con.executemany(
+        """
+        INSERT OR REPLACE INTO settings (key, value)
+        VALUES (?, ?)
+        """,
+        [
+            (
+                "usage_monitor_last_message",
+                f"Reconciled {total_grams}g of queued printer usage to {spool['brand']} {spool['color_name']}.",
+            ),
+            ("usage_monitor_last_checked", created),
+        ],
+    )
+    return total_grams
 
 
 def lookup_barcode(barcode: str) -> dict:
@@ -1367,7 +1573,7 @@ def fetch_printer_slots(base_url: str) -> tuple[list[dict], dict]:
     return slots, {"object": "box+filament_rack" if external_slot else source["object"], "raw": {"cfs": source["raw"], "external": external_raw}}
 
 
-def upsert_synced_slots(slots: list[dict]) -> int:
+def upsert_synced_slots(slots: list[dict]) -> dict:
     with connect() as con:
         cfs_locations = con.execute(
             """
@@ -1421,8 +1627,6 @@ def upsert_synced_slots(slots: list[dict]) -> int:
             # Printer generic/RFID data can name the slot, but it must not replace the
             # physical spool the user already put there.
             existing = currently_loaded
-            if not existing:
-                existing = find_spool_for_slot(con, payload, profile, location_id)
 
             if existing:
                 remaining_weight = existing["remaining_weight_g"]
@@ -1438,12 +1642,6 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                         diameter = ?, original_weight_g = ?, remaining_weight_g = ?,
                         status = 'loaded', location_id = ?, cfs_slot_name = ?,
                         notes = ?, opened_at = COALESCE(opened_at, ?),
-                        creality_filament_id = COALESCE(?, creality_filament_id),
-                        creality_brand = COALESCE(?, creality_brand),
-                        creality_type = COALESCE(?, creality_type),
-                        creality_name = COALESCE(?, creality_name),
-                        cfs_material_code = COALESCE(?, cfs_material_code),
-                        cfs_color_code = COALESCE(?, cfs_color_code),
                         updated_at = ?
                     WHERE id = ?
                     """,
@@ -1461,12 +1659,6 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                         ),
                         payload["notes"],
                         datetime.now().date().isoformat(),
-                        payload["creality_filament_id"],
-                        payload["creality_brand"],
-                        payload["creality_type"],
-                        payload["creality_name"],
-                        payload["cfs_material_code"],
-                        payload["cfs_color_code"],
                         now_iso(),
                         existing["id"],
                     ),
@@ -1483,7 +1675,7 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                 )
             touched += 1
 
-        if seen_location_ids:
+        if seen_location_ids and not unmatched_slots:
             placeholders = ",".join("?" for _ in seen_location_ids)
             con.execute(
                 f"""
@@ -1500,11 +1692,16 @@ def upsert_synced_slots(slots: list[dict]) -> int:
                 (dehumidifier_id, now_iso(), *seen_location_ids),
             )
         if unmatched_slots:
-            set_setting(
-                "slot_sync_last_message",
-                f"Printer sync found unmatched slot(s): {', '.join(unmatched_slots)}. No spools were auto-created.",
+            con.execute(
+                """
+                INSERT OR REPLACE INTO settings (key, value)
+                VALUES ('slot_sync_last_message', ?)
+                """,
+                (
+                    f"Printer sync found unmatched slot(s): {', '.join(unmatched_slots)}. No spools were auto-created.",
+                ),
             )
-    return touched
+    return {"touched": touched, "unmatched_slots": unmatched_slots}
 
 
 def clean_float(value, fallback: float = 0.0) -> float:
@@ -1737,7 +1934,7 @@ def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sq
             SELECT s.*, l.name AS location_name
             FROM spools s
             LEFT JOIN locations l ON l.id = s.location_id
-            WHERE s.status != 'retired'
+            WHERE s.status = 'loaded'
               AND l.kind = 'cfs'
             ORDER BY l.sort_order, s.id
             """
@@ -1755,6 +1952,7 @@ def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sq
             ):
                 if spool["remaining_weight_g"] > 0:
                     return [(spool, min(grams, max(0, spool["remaining_weight_g"])))]
+        return []
 
     parts = snapshot["parts"]
     total_part_grams = sum(part["planned_g"] for part in parts) or 1.0
@@ -1781,10 +1979,40 @@ def allocate_usage_to_loaded_spools(snapshot: dict, grams: int) -> list[tuple[sq
     ]
 
 
+def prior_usage_spool_for_print(snapshot: dict) -> sqlite3.Row | None:
+    if not snapshot.get("signature") or not snapshot.get("filename"):
+        return None
+    with connect() as con:
+        return con.execute(
+            """
+            SELECT s.*, l.name AS location_name
+            FROM usage_events u
+            JOIN spools s ON s.id = u.spool_id
+            LEFT JOIN locations l ON l.id = s.location_id
+            WHERE u.project = ?
+              AND u.notes LIKE 'Auto printer tracking%'
+              AND u.notes LIKE ?
+              AND s.status = 'loaded'
+            GROUP BY s.id
+            ORDER BY SUM(u.grams_used) DESC, MAX(u.id) DESC
+            LIMIT 1
+            """,
+            (snapshot["filename"], f"%Print signature: {snapshot['signature']}%"),
+        ).fetchone()
+
+
+def allocate_usage_for_snapshot(snapshot: dict, grams: int) -> list[tuple[sqlite3.Row, int]]:
+    if snapshot.get("state") == "completed":
+        prior_spool = prior_usage_spool_for_print(snapshot)
+        if prior_spool and prior_spool["remaining_weight_g"] > 0:
+            return [(prior_spool, min(grams, max(0, prior_spool["remaining_weight_g"])))]
+    return allocate_usage_to_loaded_spools(snapshot, grams)
+
+
 def active_usage_spool_ids(snapshot: dict) -> str:
     if snapshot.get("state") in {"completed", "cancelled", "error"}:
         return ""
-    allocations = allocate_usage_to_loaded_spools(snapshot, 1)
+    allocations = allocate_usage_for_snapshot(snapshot, 1)
     return ",".join(str(spool["id"]) for spool, _grams in allocations)
 
 
@@ -1962,20 +2190,9 @@ def apply_printer_usage_snapshot(snapshot: dict, reset: bool = False) -> dict:
                 "snapshot": snapshot,
             }
 
-        allocations = allocate_usage_to_loaded_spools(snapshot, whole_grams)
+        allocations = allocate_usage_for_snapshot(snapshot, whole_grams)
         if not allocations:
-            set_settings(
-                {
-                    "usage_monitor_last_message": "No loaded CFS spool found to deduct from.",
-                    "usage_monitor_active_spool_ids": active_spool_ids,
-                }
-            )
-            return {
-                "tracked": False,
-                "deducted": 0,
-                "message": "No loaded CFS spool found to deduct from.",
-                "snapshot": snapshot,
-            }
+            return record_pending_usage(snapshot, whole_grams, residual_grams)
 
         created = now_iso()
         with connect() as con:
@@ -2104,10 +2321,17 @@ def sync_printer_slots(base_url: str) -> dict:
             }
         )
         return {"synced": 0, "source": source, "slots": []}
-    touched = upsert_synced_slots(slots)
+    sync_result = upsert_synced_slots(slots)
+    touched = sync_result["touched"]
+    unmatched_slots = sync_result["unmatched_slots"]
+    slot_message = (
+        f"Printer sync found unmatched slot(s): {', '.join(unmatched_slots)}. No spools were auto-created."
+        if unmatched_slots
+        else f"Synced {touched} printer slot{'s' if touched != 1 else ''}."
+    )
     set_settings(
         {
-            "slot_sync_last_message": f"Synced {touched} printer slot{'s' if touched != 1 else ''}.",
+            "slot_sync_last_message": slot_message,
             "slot_sync_last_checked": now_iso(),
         }
     )
@@ -2117,7 +2341,7 @@ def sync_printer_slots(base_url: str) -> dict:
 def usage_monitor_status() -> dict:
     base_url = get_setting("printer_base_url")
     return {
-        "enabled": bool(base_url),
+        "enabled": bool(base_url) and get_setting("usage_monitor_enabled") == "1",
         "last_message": get_setting("usage_monitor_last_message"),
         "last_checked": get_setting("usage_monitor_last_checked"),
         "signature": get_setting("usage_monitor_signature"),
@@ -2130,7 +2354,7 @@ def usage_monitor_loop() -> None:
     while True:
         try:
             base_url = get_setting("printer_base_url")
-            if base_url:
+            if base_url and get_setting("usage_monitor_enabled") == "1":
                 sync_printer_slots(base_url)
                 sync_printer_usage(base_url)
         except Exception as exc:
@@ -2320,16 +2544,21 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 created = now_iso()
                 with connect() as con:
+                    cfs_slot_name = (
+                        cfs_slot_name_for_location_id(con, data["location_id"])
+                        if data["status"] == "loaded"
+                        else None
+                    )
                     cur = con.execute(
                         """
                         INSERT INTO spools (
                             barcode, material, brand, color_name, color_hex, diameter,
                             original_weight_g, remaining_weight_g, status, location_id,
-                            purchased_at, opened_at, notes, creality_filament_id,
+                            cfs_slot_name, purchased_at, opened_at, notes, creality_filament_id,
                             creality_brand, creality_type, creality_name, cfs_material_code,
                             cfs_color_code, created_at, updated_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             data["barcode"],
@@ -2342,6 +2571,7 @@ class Handler(SimpleHTTPRequestHandler):
                             data["remaining_weight_g"],
                             data["status"],
                             data["location_id"],
+                            cfs_slot_name,
                             data["purchased_at"],
                             data["opened_at"],
                             data["notes"],
@@ -2355,8 +2585,10 @@ class Handler(SimpleHTTPRequestHandler):
                             created,
                         ),
                     )
-                    enforce_single_loaded_spool(con, data["location_id"], cur.lastrowid)
-                self.send_json({"id": cur.lastrowid, **fetch_bootstrap()}, 201)
+                    spool_id = cur.lastrowid
+                    enforce_single_loaded_spool(con, data["location_id"], spool_id)
+                    reconcile_pending_usage_for_spool(con, spool_id, data["location_id"])
+                self.send_json({"id": spool_id, **fetch_bootstrap()}, 201)
                 return
 
             if parsed.path.startswith("/api/spools/") and parsed.path.endswith("/usage"):
@@ -2414,6 +2646,11 @@ class Handler(SimpleHTTPRequestHandler):
                     if not data["material"] or not data["brand"] or not data["color_name"]:
                         self.send_json({"error": "Material, brand, and color are required."}, 400)
                         return
+                    cfs_slot_name = (
+                        cfs_slot_name_for_location_id(con, data["location_id"])
+                        if data["status"] == "loaded"
+                        else None
+                    )
                     con.execute(
                         """
                         UPDATE spools
@@ -2422,7 +2659,7 @@ class Handler(SimpleHTTPRequestHandler):
                             status = ?, location_id = ?, purchased_at = ?, opened_at = ?,
                             notes = ?, creality_filament_id = ?, creality_brand = ?,
                             creality_type = ?, creality_name = ?, cfs_material_code = ?,
-                            cfs_color_code = ?, updated_at = ?
+                            cfs_color_code = ?, cfs_slot_name = ?, updated_at = ?
                         WHERE id = ?
                         """,
                         (
@@ -2445,11 +2682,13 @@ class Handler(SimpleHTTPRequestHandler):
                             data["creality_name"],
                             data["cfs_material_code"],
                             data["cfs_color_code"],
+                            cfs_slot_name,
                             now_iso(),
                             spool_id,
                         ),
                     )
                     enforce_single_loaded_spool(con, data["location_id"], spool_id)
+                    reconcile_pending_usage_for_spool(con, spool_id, data["location_id"])
                 self.send_json(fetch_bootstrap())
                 return
         except (json.JSONDecodeError, ValueError, sqlite3.Error) as exc:
@@ -2482,8 +2721,9 @@ def main() -> None:
     init_db()
     ensure_usage_monitor()
     server = None
-    port = 8765
-    for candidate in range(8765, 8776):
+    port = 8766
+    preferred_ports = [8766, 8765, *range(8767, 8776)]
+    for candidate in preferred_ports:
         try:
             server = ThreadingHTTPServer(("127.0.0.1", candidate), Handler)
             port = candidate
