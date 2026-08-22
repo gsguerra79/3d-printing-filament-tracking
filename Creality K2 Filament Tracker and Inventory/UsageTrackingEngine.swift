@@ -182,9 +182,9 @@ final class UsageTrackingEngine {
         try repository.setSetting("usage_monitor_active_spool_ids", "")
         return UsageApplyResult(
             tracked: true,
-            queued: true,
             message: message,
             pendingGrams: residualGrams,
+            queued: true,
             queuedGrams: grams,
             slotName: slotName
         )
