@@ -117,11 +117,19 @@ final class UsageTrackingEngine {
             let spool = loaded.spool
             let signatureNote = snapshot.signature.isEmpty ? "" : " Print signature: \(snapshot.signature)."
             let remaining = max(0, spool.remainingWeightG - grams)
-            let status: Spool.Status = remaining > 0 ? .loaded : .retired
+            // Deliberately NOT auto-retiring just because the estimate hit
+            // zero: gram tracking is an estimate (slicer progress or raw
+            // extrusion length), and prematurely retiring drops the spool
+            // out of every future matching query -- both here and in
+            // syncPrinterSlots -- effectively making the app "forget" a
+            // slot that's still physically occupied. Weight clamps at 0;
+            // status only changes once the printer itself confirms the
+            // spool is gone (syncPrinterSlots's existing removal-detection
+            // handles that transition to 'open').
             try repository.updateSpoolAfterUsage(
                 spoolId: spool.id,
                 remainingWeightG: remaining,
-                status: status,
+                status: spool.status,
                 updatedAtISO: created
             )
             let activeSlotNote = snapshot.activeCFSSlotName.isEmpty ? "" : " Active CFS slot: \(snapshot.activeCFSSlotName)."
@@ -292,6 +300,19 @@ final class UsageTrackingEngine {
                 }
             }
             return []
+        }
+
+        // The printer only reports an "actively feeding" signal for the
+        // four CFS box trays -- there's no equivalent for the External
+        // Spool Holder, so printing from External always lands here with
+        // no active-slot info at all. When there's genuinely only one
+        // candidate loaded anywhere, there's no ambiguity to resolve by
+        // scoring: it has to be the one being drawn from, regardless of
+        // what its stored material/color happen to say. This is the same
+        // confidence level as the active-slot match above, just inferred
+        // from "nothing else it could be" instead of a printer signal.
+        if loadedSpools.count == 1, let only = loadedSpools.first, only.spool.remainingWeightG > 0 {
+            return [(only, min(grams, max(0, only.spool.remainingWeightG)))]
         }
 
         let parts = snapshot.parts

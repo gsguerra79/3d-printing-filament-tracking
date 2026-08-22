@@ -389,10 +389,13 @@ final class SpoolRepository {
 
         let createdISO = ISO8601DateFormatter().string(from: Date())
         let newRemaining = max(0, spool.remainingWeightG - totalGrams)
+        // Don't auto-retire on hitting zero -- see the matching note in
+        // UsageTrackingEngine.apply(). `spool.status` is already `.loaded`
+        // here (guarded above), so this just preserves it explicitly.
         try updateSpoolAfterUsage(
             spoolId: spoolId,
             remainingWeightG: newRemaining,
-            status: newRemaining > 0 ? .loaded : .retired,
+            status: spool.status,
             updatedAtISO: createdISO
         )
         for row in pending {
@@ -437,10 +440,13 @@ final class SpoolRepository {
             let delta = target.grams - currentGrams
             if delta != 0, let spool = try fetchSpool(id: target.spoolId) {
                 let newRemaining = max(0, spool.remainingWeightG - delta)
+                // Don't auto-retire on hitting zero -- see the matching
+                // note in UsageTrackingEngine.apply(); preserve whatever
+                // status the spool already has.
                 try updateSpoolAfterUsage(
                     spoolId: target.spoolId,
                     remainingWeightG: newRemaining,
-                    status: newRemaining > 0 ? .loaded : .retired,
+                    status: spool.status,
                     updatedAtISO: createdISO
                 )
             }
