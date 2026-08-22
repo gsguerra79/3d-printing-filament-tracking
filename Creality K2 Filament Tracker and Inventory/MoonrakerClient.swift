@@ -97,8 +97,8 @@ final class MoonrakerClient {
     }
 
     private func receiveNext() {
-        webSocketTask?.receive { [weak self] result in
-            Task { @MainActor in
+        webSocketTask?.receive { result in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 switch result {
                 case .failure(let error):
@@ -146,8 +146,8 @@ final class MoonrakerClient {
     private func scheduleReconnect() {
         guard shouldReconnect else { return }
         reconnectWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            Task { @MainActor in self?.openSocket() }
+        let workItem = DispatchWorkItem {
+            Task { @MainActor [weak self] in self?.openSocket() }
         }
         reconnectWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: workItem)
@@ -168,9 +168,9 @@ final class MoonrakerClient {
 
         return try await withCheckedThrowingContinuation { continuation in
             pendingContinuations[id] = continuation
-            task.send(.data(data)) { [weak self] error in
+            task.send(.data(data)) { error in
                 guard let error else { return }
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.pendingContinuations.removeValue(forKey: id)?.resume(throwing: error)
                 }
             }
