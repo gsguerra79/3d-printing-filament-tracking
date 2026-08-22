@@ -11,7 +11,9 @@ import Foundation
 import SQLite3
 
 final class SpoolRepository {
-    private let db: FilamentDatabase
+    // Not `private`: the SpoolEditing.swift extension (a separate file, for
+    // organization) needs direct query/run access for the new CRUD methods.
+    let db: FilamentDatabase
 
     init(db: FilamentDatabase) {
         self.db = db

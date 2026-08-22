@@ -87,6 +87,79 @@ struct CrealityFilament: Identifiable, Hashable {
     var updatedAt: String
 }
 
+/// A recent usage-log entry joined with the spool it was drawn from, for the
+/// "Recent Usage" feed. Mirrors the `usage_events JOIN spools` query in the
+/// old app's fetch_bootstrap().
+struct UsageEventDisplay: Identifiable, Hashable {
+    var id: Int64
+    var spoolId: Int64
+    var gramsUsed: Int
+    var project: String
+    var notes: String
+    var createdAt: String
+    var material: String
+    var brand: String
+    var colorName: String
+    var colorHex: String
+}
+
+/// Everything the Add/Edit Spool form collects, independent of whether it's
+/// creating a new spool or updating an existing one. Mirrors the shape
+/// `normalize_spool_payload()` produces in the old app.
+struct SpoolDraft {
+    var barcode: String = ""
+    var crealityFilamentId: Int64?
+    var crealityBrand: String = "Generic"
+    var crealityType: String = "PLA"
+    var crealityName: String = ""
+    var material: String = "PLA"
+    var brand: String = ""
+    var colorName: String = ""
+    var colorHex: String = "#333333"
+    var status: Spool.Status = .sealed
+    var locationId: Int64?
+    var originalWeightG: Int = 1000
+    var remainingWeightG: Int = 1000
+    var diameter: String = "1.75mm"
+    var purchasedAt: String = ""
+    var openedAt: String = ""
+    var notes: String = ""
+
+    init() {}
+
+    init(spool: Spool) {
+        barcode = spool.barcode ?? ""
+        crealityFilamentId = spool.crealityFilamentId
+        crealityBrand = spool.crealityBrand ?? (spool.brand.isEmpty ? "Generic" : spool.brand)
+        crealityType = spool.crealityType ?? spool.material
+        crealityName = spool.crealityName ?? ""
+        material = spool.material
+        brand = spool.brand
+        colorName = spool.colorName
+        colorHex = spool.colorHex
+        status = spool.status
+        locationId = spool.locationId
+        originalWeightG = spool.originalWeightG
+        remainingWeightG = spool.remainingWeightG
+        diameter = spool.diameter
+        purchasedAt = spool.purchasedAt ?? ""
+        openedAt = spool.openedAt ?? ""
+        notes = spool.notes
+    }
+}
+
+/// A brand+type+name combination from the Creality filament catalog, used to
+/// populate the cascading Name picker in the spool editor.
+struct CatalogNameOption: Identifiable, Hashable {
+    var id: Int64
+    var name: String
+}
+
+// The standard color palette (name -> hex) lives in CFSStatusParser.swift's
+// `StandardColors.options` — it was already ported there from the Python
+// app's STANDARD_COLOR_OPTIONS for color-matching printer data, and the
+// spool editor UI reuses that same list rather than duplicating it.
+
 /// Default locations created on first launch — mirrors the Python app's
 /// `defaults` list in init_db().
 enum DefaultLocations {
