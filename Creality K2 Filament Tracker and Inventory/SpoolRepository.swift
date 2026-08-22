@@ -147,4 +147,96 @@ final class SpoolRepository {
         }
         return count
     }
+
+    // MARK: - Printer sync
+
+    func fetchLoadedSpool(atLocationId locationId: Int64) throws -> Spool? {
+        var found: Spool?
+        try db.query(
+            "SELECT \(Self.spoolColumns) FROM spools WHERE location_id = ? AND status = 'loaded' LIMIT 1",
+            bind: [locationId]
+        ) { stmt in
+            found = self.spool(from: stmt)
+        }
+        return found
+    }
+
+    private func markSpoolLoaded(spoolId: Int64, locationId: Int64, cfsSlotName: String, nowISO: String) throws {
+        try db.run(
+            "UPDATE spools SET status = 'loaded', location_id = ?, cfs_slot_name = ?, updated_at = ? WHERE id = ?",
+            bind: [locationId, cfsSlotName, nowISO, spoolId]
+        )
+    }
+
+    private func clearLoadedSpools(exceptLocationIds keepIds: Set<Int64>, movingTo dehumidifierId: Int64, nowISO: String) throws {
+        var sql = """
+            UPDATE spools
+            SET status = 'open', location_id = ?, cfs_slot_name = NULL, updated_at = ?
+            WHERE status = 'loaded'
+              AND location_id IN (
+                SELECT id FROM locations
+                WHERE (kind = 'cfs' AND name LIKE 'CFS Slot %') OR name = 'External Spool Holder'
+              )
+            """
+        var binds: [SQLiteBindable] = [dehumidifierId, nowISO]
+        if !keepIds.isEmpty {
+            let placeholders = keepIds.map { _ in "?" }.joined(separator: ",")
+            sql += " AND location_id NOT IN (\(placeholders))"
+            binds.append(contentsOf: keepIds.map { $0 as SQLiteBindable })
+        }
+        try db.run(sql, bind: binds)
+    }
+
+    /// Matches printer-reported CFS/external-holder contents to existing
+    /// spools by location. Mirrors upsert_synced_slots() from the original
+    /// Python app: it only ever updates the *status/location* of spools you
+    /// already told it about — it never invents a new spool for a slot it
+    /// doesn't recognize, since the printer's RFID/material-code data isn't
+    /// trustworthy enough on its own to create inventory records from.
+    @discardableResult
+    func syncPrinterSlots(cfsSlots: [ParsedCFSSlot], externalSlot: ParsedCFSSlot?) throws -> String {
+        let locations = try fetchLocations()
+        let cfsLocations = locations
+            .filter { $0.kind == .cfs && $0.name.hasPrefix("CFS Slot") }
+            .sorted { $0.sortOrder < $1.sortOrder }
+        let externalLocation = locations.first { $0.name == "External Spool Holder" }
+        let dehumidifier = locations.first { $0.kind == .dryer }
+
+        var seenLocationIds: Set<Int64> = []
+        var unmatchedSlotNames: [String] = []
+        let now = ISO8601DateFormatter().string(from: Date())
+
+        func sync(_ slot: ParsedCFSSlot, locationId: Int64) throws {
+            seenLocationIds.insert(locationId)
+            if let existing = try fetchLoadedSpool(atLocationId: locationId) {
+                try markSpoolLoaded(spoolId: existing.id, locationId: locationId, cfsSlotName: slot.slotName, nowISO: now)
+            } else {
+                unmatchedSlotNames.append(slot.slotName)
+            }
+        }
+
+        for slot in cfsSlots {
+            guard let index = slot.slotIndex, index < cfsLocations.count else { continue }
+            try sync(slot, locationId: cfsLocations[index].id)
+        }
+        if let externalSlot, let externalLocation {
+            try sync(externalSlot, locationId: externalLocation.id)
+        }
+
+        if !seenLocationIds.isEmpty, unmatchedSlotNames.isEmpty, let dehumidifierId = dehumidifier?.id {
+            try clearLoadedSpools(exceptLocationIds: seenLocationIds, movingTo: dehumidifierId, nowISO: now)
+        }
+
+        let message: String
+        if !unmatchedSlotNames.isEmpty {
+            message = "Printer sync found unmatched slot(s): \(unmatchedSlotNames.joined(separator: ", ")). No spools were auto-created."
+        } else if seenLocationIds.isEmpty {
+            message = "Printer connected; nothing currently loaded."
+        } else {
+            message = "Synced \(seenLocationIds.count) slot(s) at \(now)."
+        }
+        try setSetting("slot_sync_last_message", message)
+        try setSetting("slot_sync_last_checked", now)
+        return message
+    }
 }

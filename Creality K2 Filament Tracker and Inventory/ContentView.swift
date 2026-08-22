@@ -2,10 +2,8 @@
 //  ContentView.swift
 //  Creality K2 Filament Tracker and Inventory
 //
-//  First pass at the main window: a read-only table of the real spool
-//  inventory (migrated from the old Python app's database) grouped by
-//  status, so we can confirm the data layer works end-to-end before
-//  layering on editing, Creality profile pickers, and printer sync.
+//  Main window: a read-only table of the spool inventory grouped by
+//  status, plus live printer connection status and address controls.
 //
 
 import SwiftUI
@@ -38,23 +36,36 @@ struct ContentView: View {
                 }
             }
         } detail: {
-            VStack(spacing: 8) {
-                Text("\(model.spools.count) spools total")
-                    .font(.title2)
-                Text("Database: \(FilamentDatabase.defaultDatabaseURL().path)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                if let note = model.migrationNote {
-                    Text(note)
+            @Bindable var model = model
+            VStack(spacing: 16) {
+                VStack(spacing: 8) {
+                    Text("\(model.spools.count) spools total")
+                        .font(.title2)
+                    Text("Database: \(FilamentDatabase.defaultDatabaseURL().path)")
                         .font(.caption)
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                        .padding(.top, 4)
+                    if let note = model.migrationNote {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                            .textSelection(.enabled)
+                            .padding(.top, 4)
+                    }
                 }
+
+                Divider()
+
+                PrinterStatusView(
+                    connectionState: model.printerSync?.connectionState ?? .disconnected,
+                    lastSyncMessage: model.printerSync?.lastSyncMessage ?? "",
+                    addressDraft: $model.printerAddressDraft,
+                    onSave: { model.savePrinterAddressAndReconnect() }
+                )
             }
             .padding()
+            .frame(maxWidth: 480)
         }
     }
 
