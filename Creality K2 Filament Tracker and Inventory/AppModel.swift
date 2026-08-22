@@ -8,14 +8,15 @@
 //
 
 import Foundation
-import SwiftUI
+import Observation
 
 @MainActor
-final class AppModel: ObservableObject {
-    @Published var spools: [Spool] = []
-    @Published var locations: [Location] = []
-    @Published var settings: [String: String] = [:]
-    @Published var loadError: String?
+@Observable
+final class AppModel {
+    var spools: [Spool] = []
+    var locations: [Location] = []
+    var settings: [String: String] = [:]
+    var loadError: String?
 
     let repository: SpoolRepository?
 

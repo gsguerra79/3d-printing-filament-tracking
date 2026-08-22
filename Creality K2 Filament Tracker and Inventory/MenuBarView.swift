@@ -11,7 +11,7 @@ import AppKit
 import SwiftUI
 
 struct MenuBarView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -56,5 +56,5 @@ struct MenuBarView: View {
 
 #Preview {
     MenuBarView()
-        .environmentObject(AppModel())
+        .environment(AppModel())
 }

@@ -7,17 +7,17 @@ import SwiftUI
 
 @main
 struct Creality_K2_Filament_Tracker_and_InventoryApp: App {
-    @StateObject private var model = AppModel()
+    @State private var model = AppModel()
 
     var body: some Scene {
         WindowGroup("Filament Inventory") {
             ContentView()
-                .environmentObject(model)
+                .environment(model)
         }
 
         MenuBarExtra("Filament", systemImage: "printer.fill") {
             MenuBarView()
-                .environmentObject(model)
+                .environment(model)
         }
         .menuBarExtraStyle(.window)
     }
