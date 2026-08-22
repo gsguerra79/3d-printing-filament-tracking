@@ -60,7 +60,12 @@ enum LegacyMigrationResult: CustomStringConvertible {
 final class FilamentDatabase {
     private var db: OpaquePointer?
     let path: URL
-    private(set) static var lastMigrationResult: LegacyMigrationResult?
+
+    /// Outcome of the one-time legacy-database migration for *this*
+    /// instance. Deliberately an instance property, not `static` — a
+    /// `static var` here would be nonisolated global mutable state, which
+    /// Swift 6's strict concurrency checking rejects outright.
+    private(set) var migrationResult: LegacyMigrationResult?
 
     /// Path to the old Python app's database, used only for a one-time
     /// migration on first launch. Update this if the old project folder
@@ -86,7 +91,7 @@ final class FilamentDatabase {
 
     init(path: URL = FilamentDatabase.defaultDatabaseURL()) throws {
         self.path = path
-        Self.lastMigrationResult = Self.migrateLegacyDatabaseIfNeeded(to: path)
+        self.migrationResult = Self.migrateLegacyDatabaseIfNeeded(to: path)
 
         if sqlite3_open(path.path, &db) != SQLITE_OK {
             let message = String(cString: sqlite3_errmsg(db))

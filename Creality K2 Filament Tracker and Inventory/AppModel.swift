@@ -26,13 +26,13 @@ final class AppModel {
         var repo: SpoolRepository?
         do {
             let db = try FilamentDatabase()
+            migrationNote = db.migrationResult?.description
             repo = SpoolRepository(db: db)
             self.repository = repo
         } catch {
             self.repository = nil
             self.loadError = error.localizedDescription
         }
-        migrationNote = FilamentDatabase.lastMigrationResult?.description
 
         if let repo {
             let sync = PrinterSyncEngine(repository: repo)
