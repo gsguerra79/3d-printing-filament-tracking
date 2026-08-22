@@ -210,6 +210,12 @@ final class SpoolRepository {
             seenLocationIds.insert(locationId)
             if let existing = try fetchLoadedSpool(atLocationId: locationId) {
                 try markSpoolLoaded(spoolId: existing.id, locationId: locationId, cfsSlotName: slot.slotName, nowISO: now)
+                // Mirrors reconcile_pending_usage_for_spool() being called
+                // right after a spool is assigned into a CFS holder: credit
+                // any usage that queued up while no spool was safely
+                // matched to this slot. Safe to call on every sync poll —
+                // it's a no-op once there's nothing pending for the slot.
+                try reconcilePendingUsage(forSpoolId: existing.id, slotName: slot.slotName)
             } else {
                 unmatchedSlotNames.append(slot.slotName)
             }
@@ -238,5 +244,238 @@ final class SpoolRepository {
         try setSetting("slot_sync_last_message", message)
         try setSetting("slot_sync_last_checked", now)
         return message
+    }
+
+    // MARK: - Usage tracking
+
+    func getSetting(_ key: String) throws -> String? {
+        var value: String?
+        try db.query("SELECT value FROM settings WHERE key = ? LIMIT 1", bind: [key]) { stmt in
+            value = stmt.stringColumn(0)
+        }
+        return value
+    }
+
+    struct LoadedCFSSpool {
+        var spool: Spool
+        var locationName: String
+    }
+
+    /// Spools currently loaded into a CFS-kind location — the pool of
+    /// candidates usage gets allocated against.
+    func fetchLoadedCFSSpools() throws -> [LoadedCFSSpool] {
+        var results: [LoadedCFSSpool] = []
+        try db.query("""
+            SELECT \(Self.spoolColumns.split(separator: ",").map { "s.\($0.trimmingCharacters(in: .whitespacesAndNewlines))" }.joined(separator: ", ")), l.name
+            FROM spools s
+            JOIN locations l ON l.id = s.location_id
+            WHERE s.status = 'loaded' AND l.kind = 'cfs'
+            ORDER BY l.sort_order, s.id
+            """
+        ) { stmt in
+            guard let spool = self.spool(from: stmt), let locationName = stmt.stringColumn(23) else { return }
+            results.append(LoadedCFSSpool(spool: spool, locationName: locationName))
+        }
+        return results
+    }
+
+    /// Mirrors prior_usage_spool_for_print(): when a print has *completed*,
+    /// prefer crediting the spool that was already being tracked for it
+    /// over re-running the live allocation heuristic.
+    func priorUsageSpool(filename: String, signaturePattern: String) throws -> Spool? {
+        var found: Spool?
+        try db.query("""
+            SELECT \(Self.spoolColumns.split(separator: ",").map { "s.\($0.trimmingCharacters(in: .whitespacesAndNewlines))" }.joined(separator: ", "))
+            FROM usage_events u
+            JOIN spools s ON s.id = u.spool_id
+            WHERE u.project = ?
+              AND u.notes LIKE 'Auto printer tracking%'
+              AND u.notes LIKE ?
+              AND s.status = 'loaded'
+            GROUP BY s.id
+            ORDER BY SUM(u.grams_used) DESC, MAX(u.id) DESC
+            LIMIT 1
+            """,
+            bind: [filename, signaturePattern]
+        ) { stmt in
+            found = self.spool(from: stmt)
+        }
+        return found
+    }
+
+    /// Adds `grams` to the most recent matching "Auto printer tracking"
+    /// usage_events row for this spool+print, or inserts a new one if none
+    /// exists yet. Mirrors the UPDATE-then-INSERT-if-no-match pattern in
+    /// apply_printer_usage_snapshot().
+    func accumulateUsageEvent(
+        spoolId: Int64,
+        grams: Int,
+        project: String,
+        signaturePattern: String,
+        insertNotes: String,
+        createdISO: String
+    ) throws {
+        try db.run(
+            """
+            UPDATE usage_events
+            SET grams_used = grams_used + ?, created_at = ?
+            WHERE id = (
+                SELECT id FROM usage_events
+                WHERE spool_id = ? AND project = ?
+                  AND notes LIKE 'Auto printer tracking%' AND notes LIKE ?
+                ORDER BY id DESC LIMIT 1
+            )
+            """,
+            bind: [grams, createdISO, spoolId, project, signaturePattern]
+        )
+        if db.lastChangeCount == 0 {
+            try db.run(
+                "INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at) VALUES (?, ?, ?, ?, ?)",
+                bind: [spoolId, grams, project, insertNotes, createdISO]
+            )
+        }
+    }
+
+    func updateSpoolAfterUsage(spoolId: Int64, remainingWeightG: Int, status: Spool.Status, updatedAtISO: String) throws {
+        try db.run(
+            "UPDATE spools SET remaining_weight_g = ?, status = ?, updated_at = ? WHERE id = ?",
+            bind: [remainingWeightG, status.rawValue, updatedAtISO, spoolId]
+        )
+    }
+
+    func recordPendingUsage(
+        slotName: String,
+        signature: String,
+        filename: String,
+        gramsPending: Int,
+        basis: String,
+        state: String,
+        notes: String,
+        createdISO: String
+    ) throws {
+        try db.run(
+            """
+            INSERT INTO pending_usage_events (
+                slot_name, signature, filename, grams_pending, basis, state, notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(slot_name, signature) DO UPDATE SET
+                grams_pending = grams_pending + excluded.grams_pending,
+                filename = excluded.filename,
+                basis = excluded.basis,
+                state = excluded.state,
+                notes = excluded.notes,
+                updated_at = excluded.updated_at
+            """,
+            bind: [slotName, signature, filename, gramsPending, basis, state, notes, createdISO, createdISO]
+        )
+    }
+
+    /// Mirrors reconcile_pending_usage_for_spool(): when a spool becomes
+    /// loaded in a CFS holder, credit it for any usage that was queued
+    /// against that holder while no spool was safely identified there.
+    @discardableResult
+    func reconcilePendingUsage(forSpoolId spoolId: Int64, slotName: String) throws -> Int {
+        guard let spool = try fetchSpool(id: spoolId), spool.status == .loaded else { return 0 }
+
+        var pending: [(id: Int64, grams: Int)] = []
+        try db.query(
+            "SELECT id, grams_pending FROM pending_usage_events WHERE slot_name = ? AND grams_pending > 0 ORDER BY created_at, id",
+            bind: [slotName]
+        ) { stmt in
+            pending.append((id: Int64(stmt.intColumn(0)), grams: stmt.intColumn(1)))
+        }
+        let totalGrams = pending.reduce(0) { $0 + $1.grams }
+        guard totalGrams > 0 else { return 0 }
+
+        let createdISO = ISO8601DateFormatter().string(from: Date())
+        let newRemaining = max(0, spool.remainingWeightG - totalGrams)
+        try updateSpoolAfterUsage(
+            spoolId: spoolId,
+            remainingWeightG: newRemaining,
+            status: newRemaining > 0 ? .loaded : .retired,
+            updatedAtISO: createdISO
+        )
+        for row in pending {
+            let notes = "Reconciled pending printer usage after manual load. Active holder: \(slotName)."
+            try db.run(
+                "INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at) VALUES (?, ?, '', ?, ?)",
+                bind: [spoolId, row.grams, notes, createdISO]
+            )
+        }
+        try db.run("DELETE FROM pending_usage_events WHERE slot_name = ?", bind: [slotName])
+        try setSetting("usage_monitor_last_message", "Reconciled \(totalGrams)g of queued printer usage to \(spool.brand) \(spool.colorName).")
+        try setSetting("usage_monitor_last_checked", createdISO)
+        return totalGrams
+    }
+
+    /// Mirrors reconcile_completed_multicolor_usage(): once a multicolor
+    /// print completes, snap the tracked-so-far grams for each involved
+    /// spool to exactly match the slicer's planned split (incremental
+    /// per-poll allocation can drift slightly during the print).
+    func rebalanceUsageEvents(
+        project: String,
+        signaturePattern: String,
+        targets: [(spoolId: Int64, grams: Int)],
+        createdISO: String
+    ) throws {
+        for target in targets {
+            var currentEventId: Int64?
+            var currentGrams = 0
+            try db.query(
+                """
+                SELECT id, grams_used FROM usage_events
+                WHERE spool_id = ? AND project = ?
+                  AND notes LIKE 'Auto printer tracking%' AND notes LIKE ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                bind: [target.spoolId, project, signaturePattern]
+            ) { stmt in
+                currentEventId = Int64(stmt.intColumn(0))
+                currentGrams = stmt.intColumn(1)
+            }
+
+            let delta = target.grams - currentGrams
+            if delta != 0, let spool = try fetchSpool(id: target.spoolId) {
+                let newRemaining = max(0, spool.remainingWeightG - delta)
+                try updateSpoolAfterUsage(
+                    spoolId: target.spoolId,
+                    remainingWeightG: newRemaining,
+                    status: newRemaining > 0 ? .loaded : .retired,
+                    updatedAtISO: createdISO
+                )
+            }
+            if let eventId = currentEventId {
+                try db.run(
+                    """
+                    UPDATE usage_events
+                    SET grams_used = ?, created_at = ?,
+                        notes = CASE WHEN notes LIKE '%Rebalanced to completed slicer split.%' THEN notes
+                                     ELSE notes || ' Rebalanced to completed slicer split.' END
+                    WHERE id = ?
+                    """,
+                    bind: [target.grams, createdISO, eventId]
+                )
+            }
+        }
+    }
+
+    /// Grouped totals of "Auto printer tracking" grams recorded so far for
+    /// this print, ordered highest-first — used to line up against the
+    /// slicer's planned per-part targets during rebalancing.
+    func usageEventTotals(project: String, signaturePattern: String) throws -> [(spoolId: Int64, gramsUsed: Int)] {
+        var results: [(spoolId: Int64, gramsUsed: Int)] = []
+        try db.query(
+            """
+            SELECT spool_id, SUM(grams_used) AS total
+            FROM usage_events
+            WHERE project = ? AND notes LIKE 'Auto printer tracking%' AND notes LIKE ?
+            GROUP BY spool_id
+            ORDER BY total DESC, spool_id
+            """,
+            bind: [project, signaturePattern]
+        ) { stmt in
+            results.append((spoolId: Int64(stmt.intColumn(0)), gramsUsed: stmt.intColumn(1)))
+        }
+        return results
     }
 }

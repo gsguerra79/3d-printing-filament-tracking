@@ -172,6 +172,14 @@ final class FilamentDatabase {
         sqlite3_last_insert_rowid(db)
     }
 
+    /// Number of rows the most recent INSERT/UPDATE/DELETE touched. Used to
+    /// tell "UPDATE matched an existing usage_events row" apart from
+    /// "nothing matched, need to INSERT instead" (mirrors checking
+    /// cursor.rowcount in the Python app).
+    var lastChangeCount: Int {
+        Int(sqlite3_changes(db))
+    }
+
     // MARK: - Schema
 
     private func createSchemaIfNeeded() throws {
