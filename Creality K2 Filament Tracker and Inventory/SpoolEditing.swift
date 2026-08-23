@@ -114,7 +114,7 @@ extension SpoolRepository {
         try db.query(
             """
             SELECT u.id, u.spool_id, u.grams_used, u.project, u.notes, u.created_at,
-                   s.material, s.brand, s.color_name, s.color_hex
+                   s.material, s.brand, s.color_name, s.color_hex, s.creality_name
             FROM usage_events u
             JOIN spools s ON s.id = u.spool_id
             ORDER BY u.created_at DESC, u.id DESC
@@ -141,7 +141,8 @@ extension SpoolRepository {
                 material: material,
                 brand: brand,
                 colorName: colorName,
-                colorHex: colorHex
+                colorHex: colorHex,
+                crealityName: stmt.stringColumn(10)
             ))
         }
         return results
@@ -336,6 +337,26 @@ extension SpoolRepository {
         )
     }
 
+    /// Moves a loaded spool back to the dehumidifier as an open spool — the
+    /// card menu's "Unload" action. A no-op if the spool isn't currently
+    /// `.loaded` (nothing to unload). Mirrors the same open/Dehumidifier
+    /// transition `enforceSingleLoadedSpool` already applies to whatever
+    /// spool gets bumped out when a *different* spool is loaded into its
+    /// slot — this is the same move, just triggered directly.
+    func unloadSpool(id: Int64) throws {
+        guard let spool = try fetchSpool(id: id), spool.status == .loaded else { return }
+        let dehumidifierId = try fetchLocations().first(where: { $0.kind == .dryer })?.id
+        let now = ISO8601DateFormatter().string(from: Date())
+        try db.run(
+            """
+            UPDATE spools
+            SET status = 'open', location_id = ?, cfs_slot_name = NULL, updated_at = ?
+            WHERE id = ?
+            """,
+            bind: [dehumidifierId, now, id]
+        )
+    }
+
     /// Mirrors enforce_single_loaded_spool(): loading a spool into a CFS
     /// slot bumps out whatever spool was already marked loaded there.
     private func enforceSingleLoadedSpool(locationId: Int64?, loadedSpoolId: Int64) throws {
@@ -367,5 +388,92 @@ extension SpoolRepository {
         let tray = (index / 4) + 1
         let letter = letters[index % 4]
         return "T\(tray)\(letter)"
+    }
+
+    // MARK: - Tracking Error Corrections (manual pending-usage assignment)
+
+    /// Every still-unresolved queued printer-usage row — grams the usage
+    /// tracker saw disappear from a CFS holder but couldn't safely credit to
+    /// a spool automatically (no spool was loaded there at the time, or the
+    /// slot didn't match one on file). Normally these clear themselves the
+    /// next time a spool is loaded into that same holder (see
+    /// reconcilePendingUsage(forSpoolId:slotName:)); this feeds the
+    /// Tracking Error Corrections settings page for the cases that need a
+    /// person to look and decide.
+    func fetchPendingUsageEvents() throws -> [PendingUsageEvent] {
+        var results: [PendingUsageEvent] = []
+        try db.query(
+            """
+            SELECT id, slot_name, signature, filename, grams_pending, basis, state, notes, created_at, updated_at
+            FROM pending_usage_events
+            WHERE grams_pending > 0
+            ORDER BY created_at DESC, id DESC
+            """
+        ) { stmt in
+            guard
+                let slotName = stmt.stringColumn(1),
+                let signature = stmt.stringColumn(2),
+                let filename = stmt.stringColumn(3),
+                let basis = stmt.stringColumn(5),
+                let state = stmt.stringColumn(6),
+                let notes = stmt.stringColumn(7),
+                let createdAt = stmt.stringColumn(8),
+                let updatedAt = stmt.stringColumn(9)
+            else { return }
+            results.append(PendingUsageEvent(
+                id: Int64(stmt.intColumn(0)),
+                slotName: slotName,
+                signature: signature,
+                filename: filename,
+                gramsPending: stmt.intColumn(4),
+                basis: basis,
+                state: state,
+                notes: notes,
+                createdAt: createdAt,
+                updatedAt: updatedAt
+            ))
+        }
+        return results
+    }
+
+    /// Manually resolves one queued row: the operator has looked at the
+    /// filename/slot and knows which physical spool the grams actually came
+    /// off of, so this deducts the weight and logs a usage event directly —
+    /// the same effect reconcilePendingUsage(forSpoolId:slotName:) has when
+    /// a spool is loaded, just triggered by a person instead of a load
+    /// event, and not restricted to the spool currently sitting in that
+    /// slot.
+    func assignPendingUsage(id: Int64, toSpoolId spoolId: Int64) throws {
+        var grams: Int?
+        var slotName: String?
+        try db.query(
+            "SELECT grams_pending, slot_name FROM pending_usage_events WHERE id = ? LIMIT 1",
+            bind: [id]
+        ) { stmt in
+            grams = stmt.intColumn(0)
+            slotName = stmt.stringColumn(1)
+        }
+        guard let grams, grams > 0, let spool = try fetchSpool(id: spoolId) else {
+            try db.run("DELETE FROM pending_usage_events WHERE id = ?", bind: [id])
+            return
+        }
+        let now = ISO8601DateFormatter().string(from: Date())
+        let newRemaining = max(0, spool.remainingWeightG - grams)
+        try updateSpoolAfterUsage(spoolId: spoolId, remainingWeightG: newRemaining, status: spool.status, updatedAtISO: now)
+        let notes = "Manually assigned queued printer usage"
+            + (slotName.map { " from \($0)" } ?? "")
+            + " via Tracking Error Corrections."
+        try db.run(
+            "INSERT INTO usage_events (spool_id, grams_used, project, notes, created_at) VALUES (?, ?, '', ?, ?)",
+            bind: [spoolId, grams, notes, now]
+        )
+        try db.run("DELETE FROM pending_usage_events WHERE id = ?", bind: [id])
+    }
+
+    /// Drops a queued row without applying it to any spool — for grams that
+    /// turned out to be spurious (a calibration print, a printer glitch) and
+    /// shouldn't be deducted from anything.
+    func discardPendingUsage(id: Int64) throws {
+        try db.run("DELETE FROM pending_usage_events WHERE id = ?", bind: [id])
     }
 }

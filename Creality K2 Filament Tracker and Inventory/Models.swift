@@ -20,7 +20,7 @@ struct Location: Identifiable, Hashable {
 }
 
 struct Spool: Identifiable, Hashable {
-    enum Status: String, CaseIterable {
+    enum Status: String, CaseIterable, Hashable {
         case sealed, open, loaded, retired
     }
 
@@ -101,12 +101,13 @@ struct UsageEventDisplay: Identifiable, Hashable {
     var brand: String
     var colorName: String
     var colorHex: String
+    var crealityName: String?
 }
 
 /// Everything the Add/Edit Spool form collects, independent of whether it's
 /// creating a new spool or updating an existing one. Mirrors the shape
 /// `normalize_spool_payload()` produces in the old app.
-struct SpoolDraft {
+struct SpoolDraft: Equatable {
     var barcode: String = ""
     var crealityFilamentId: Int64?
     var crealityBrand: String = "Generic"
