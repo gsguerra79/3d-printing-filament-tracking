@@ -383,8 +383,28 @@ final class UsageTrackingEngine {
             if score > 0 { candidates.append((score, loaded)) }
         }
 
+        let available = materialCandidates.filter { !usedIds.contains($0.spool.id) && $0.spool.remainingWeightG > 0 }
+
+        // A part with no color info at all (2026-08-23, fixed after a live
+        // print deducted grams from an uninvolved white spool while only
+        // black was actually printing): a material match alone isn't
+        // confident enough to pick one specific spool when more than one
+        // loaded spool shares that material. Previously this fell straight
+        // into the scoring below, where a colorless part scores every
+        // material-matching candidate identically (no color bonus, no color
+        // penalty) and just returns whichever happened to iterate first --
+        // silently crediting an arbitrary uninvolved spool instead of the
+        // one actually being printed from. Slicer metadata can report a
+        // part like this for a small purge/prime amount on an
+        // assigned-but-unused CFS color, which is exactly the scenario that
+        // corrupted tracking. Only auto-pick here when there's truly
+        // nothing else it could be; otherwise leave it unmatched so it
+        // queues for manual reconciliation instead of guessing.
+        if part.colorHex.isEmpty {
+            return available.count == 1 ? available[0] : nil
+        }
+
         if candidates.isEmpty {
-            let available = materialCandidates.filter { !usedIds.contains($0.spool.id) && $0.spool.remainingWeightG > 0 }
             return available.count == 1 ? available[0] : nil
         }
         candidates.sort { $0.score > $1.score }

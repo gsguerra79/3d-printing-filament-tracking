@@ -12,13 +12,14 @@
 //  ~450ms) rather than requiring an explicit Save button, matching how
 //  native macOS inspectors (Notes, Reminders, Finder's Get Info) behave.
 //
-//  Deliberately has no `.toolbar`/`.navigationTitle` — Back/Load/Log Usage/
+//  Deliberately has no `.toolbar`/`.navigationTitle` — Back/Load/
 //  Retire live in this view's own header row, and Delete is a separated
 //  button at the bottom, so the app's top window bar stays fixed on just
 //  the app name rather than changing per screen.
 //
 
 import SwiftUI
+import AppKit
 
 struct SpoolDetailPageView: View {
     @Environment(AppModel.self) private var model
@@ -33,7 +34,6 @@ struct SpoolDetailPageView: View {
     @State private var isGenericBrand = true
     @State private var saveTask: Task<Void, Never>?
     @State private var showingLoadPopover = false
-    @State private var showingUsagePopover = false
     @State private var confirmingDelete = false
 
     init(spool: Spool) {
@@ -84,14 +84,33 @@ struct SpoolDetailPageView: View {
                             .labelsHidden()
                         }
                         field("Color") {
-                            Picker("", selection: $draft.colorName) {
-                                ForEach(StandardColors.options.map(\.name), id: \.self) { name in
-                                    Text(name).tag(name)
+                            HStack(spacing: 6) {
+                                TextField("Color name", text: $draft.colorName)
+                                    .textFieldStyle(.roundedBorder)
+                                    .accessibilityLabel("Color name")
+                                ColorPicker("Spool icon color", selection: iconColor, supportsOpacity: false)
+                                    .labelsHidden()
+                                    .fixedSize()
+                                    .help("Choose the spool icon color")
+                                Menu {
+                                    ForEach(StandardColors.options, id: \.name) { color in
+                                        Button(color.name) {
+                                            draft.colorName = color.name
+                                            draft.colorHex = color.hex
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: "chevron.down")
                                 }
+                                .menuStyle(.borderlessButton)
+                                .fixedSize()
+                                .help("Choose a standard color")
+                                .accessibilityLabel("Standard colors")
                             }
-                            .labelsHidden()
                             .onChange(of: draft.colorName) { _, newValue in
-                                if let match = StandardColors.options.first(where: { $0.name == newValue }) {
+                                if let match = StandardColors.options.first(where: {
+                                    $0.name.caseInsensitiveCompare(newValue) == .orderedSame
+                                }) {
                                     draft.colorHex = match.hex
                                 }
                             }
@@ -100,7 +119,7 @@ struct SpoolDetailPageView: View {
 
                     pairedRow {
                         field("Status") {
-                            Picker("", selection: $draft.status) {
+                            Picker("", selection: statusSelection) {
                                 ForEach(Spool.Status.allCases, id: \.self) { status in
                                     Text(status.rawValue.capitalized).tag(status)
                                 }
@@ -109,7 +128,6 @@ struct SpoolDetailPageView: View {
                         }
                         field("Location") {
                             Picker("", selection: $draft.locationId) {
-                                Text("Unassigned").tag(Int64?.none)
                                 ForEach(model.locations) { location in
                                     Text(location.name).tag(Optional(location.id))
                                 }
@@ -125,12 +143,10 @@ struct SpoolDetailPageView: View {
 
                     pairedRow {
                         field("Purchased") {
-                            TextField("YYYY-MM-DD", text: $draft.purchasedAt)
-                                .textFieldStyle(.roundedBorder)
+                            SpoolDatePicker(title: "Purchased", value: $draft.purchasedAt)
                         }
                         field("Opened") {
-                            TextField("YYYY-MM-DD", text: $draft.openedAt)
-                                .textFieldStyle(.roundedBorder)
+                            SpoolDatePicker(title: "Opened", value: $draft.openedAt)
                         }
                     }
                     TextField("Notes", text: $draft.notes, axis: .vertical)
@@ -160,6 +176,11 @@ struct SpoolDetailPageView: View {
             Text("This can't be undone.")
         }
         .onAppear {
+            if draft.locationId == nil {
+                let locationName = draft.status == .sealed ? "Sealed Stock"
+                    : draft.status == .retired ? "Retired / Empty" : "Dehumidifier"
+                draft.locationId = model.locations.first { $0.name == locationName }?.id
+            }
             isGenericBrand = draft.crealityBrand.caseInsensitiveCompare("Generic") == .orderedSame
             refreshBrands()
         }
@@ -190,16 +211,6 @@ struct SpoolDetailPageView: View {
             .popover(isPresented: $showingLoadPopover) {
                 LoadSpoolPopoverView(spool: spool) { locationId in
                     model.loadSpool(spool, intoLocationId: locationId)
-                }
-            }
-            Button {
-                showingUsagePopover = true
-            } label: {
-                Label("Log Usage…", systemImage: "minus.circle")
-            }
-            .popover(isPresented: $showingUsagePopover) {
-                LogUsagePopoverView(spool: spool) { grams, project, notes in
-                    model.logUsage(spoolId: spool.id, grams: grams, project: project, notes: notes)
                 }
             }
             Button {
@@ -256,6 +267,33 @@ struct SpoolDetailPageView: View {
         }
     }
 
+    private var statusSelection: Binding<Spool.Status> {
+        Binding(
+            get: { draft.status },
+            set: { status in
+                draft.status = status
+                if status == .sealed {
+                    draft.locationId = model.locations.first { $0.name == "Sealed Stock" }?.id
+                }
+            }
+        )
+    }
+
+    private var iconColor: Binding<Color> {
+        Binding(
+            get: { Color(hex: draft.colorHex) },
+            set: { color in
+                guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return }
+                draft.colorHex = String(
+                    format: "#%02x%02x%02x",
+                    Int((rgb.redComponent * 255).rounded()),
+                    Int((rgb.greenComponent * 255).rounded()),
+                    Int((rgb.blueComponent * 255).rounded())
+                )
+            }
+        )
+    }
+
     private var headerTitle: String {
         let brand = draft.brand.isEmpty ? draft.crealityBrand : draft.brand
         return draft.colorName.isEmpty ? brand : "\(brand) \(draft.colorName)"
@@ -284,4 +322,65 @@ struct SpoolDetailPageView: View {
         }
         draft.crealityFilamentId = names.first?.id
     }
+}
+
+/// Keeps optional inventory dates in their existing YYYY-MM-DD storage format.
+private struct SpoolDatePicker: View {
+    let title: String
+    @Binding var value: String
+    @State private var showingCalendar = false
+
+    private var selectedDate: Binding<Date> {
+        Binding(
+            get: { Self.formatter.date(from: value) ?? Date() },
+            set: { value = Self.formatter.string(from: $0) }
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button {
+                showingCalendar = true
+            } label: {
+                HStack {
+                    Text(value.isEmpty ? "Choose date…" : selectedDate.wrappedValue.formatted(date: .abbreviated, time: .omitted))
+                    Spacer(minLength: 4)
+                    Image(systemName: "calendar")
+                }
+            }
+            .accessibilityLabel("\(title) date")
+            .popover(isPresented: $showingCalendar) {
+                VStack(alignment: .trailing, spacing: 12) {
+                    DatePicker(title, selection: selectedDate, displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                    HStack {
+                        Button("Today") { selectedDate.wrappedValue = Date() }
+                        Spacer()
+                        Button("Done") { showingCalendar = false }
+                    }
+                }
+                .padding()
+            }
+            if !value.isEmpty {
+                Button {
+                    value = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Clear date")
+                .accessibilityLabel("Clear \(title.lowercased()) date")
+            }
+        }
+    }
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 }

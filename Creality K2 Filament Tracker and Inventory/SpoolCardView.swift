@@ -166,7 +166,13 @@ struct SpoolCardView: View {
                 tag(spool.status.rawValue.capitalized, tint: statusTint)
                 tag(locationName.isEmpty ? "No location" : locationName, tint: .secondary)
                 if isActive {
-                    tag("In use", tint: .green)
+                    // Red and bold rather than the same subdued style as the
+                    // other tags — this is the one flag on a card that
+                    // actually matters while a print is running, and it was
+                    // getting lost next to the status/location pills.
+                    Text("● Printing")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.red)
                 }
             }
         }

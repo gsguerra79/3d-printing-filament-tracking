@@ -13,6 +13,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -38,8 +39,12 @@ struct MenuBarView: View {
             Divider()
 
             Button("Open Filament Tracker") {
+                // Restore the Dock icon (AppDelegate hides it once the last
+                // window closes) before reopening the window itself, so the
+                // two stay in sync -- window open means Dock icon visible.
+                NSApp.setActivationPolicy(.regular)
                 NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first?.makeKeyAndOrderFront(nil)
+                openWindow(id: "main")
             }
 
             Button("Quit") {
@@ -92,6 +97,11 @@ struct MenuBarView: View {
                 Text("\(spool.brand) \(spool.colorName)")
                     .font(.callout)
                     .lineLimit(1)
+                if model.activeSpoolIds.contains(spool.id) {
+                    Text("● Printing")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.red)
+                }
                 Spacer(minLength: 4)
                 Text("\(spool.remainingWeightG)g")
                     .font(.caption)

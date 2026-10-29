@@ -7,6 +7,7 @@ import SwiftUI
 
 @main
 struct Creality_K2_Filament_Tracker_and_InventoryApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
 
     init() {
@@ -14,7 +15,11 @@ struct Creality_K2_Filament_Tracker_and_InventoryApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Filament Tracker v2") {
+        // Explicit id so MenuBarView's "Open Filament Tracker" action can
+        // reliably reopen this exact window via `openWindow(id:)` even
+        // after it's been fully closed (see AppDelegate.swift for the
+        // matching Dock-icon-hiding half of this).
+        WindowGroup("Filament Tracker v2.1", id: "main") {
             ContentView()
                 .environment(model)
         }

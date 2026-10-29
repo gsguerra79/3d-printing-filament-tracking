@@ -24,6 +24,13 @@ final class PrinterSyncEngine {
     private(set) var latestCFSSlots: [ParsedCFSSlot] = []
     private(set) var latestExternalSlot: ParsedCFSSlot?
 
+    /// Whether the printer's own `print_stats.state` is "printing" right
+    /// now, per the last usage-tracking check (throttled to the same
+    /// ~10s cadence as usage tracking itself, not every websocket push).
+    /// Drives the left column's status readout switching from a plain
+    /// "Connected" to "Printing" while a print is actually running.
+    private(set) var isPrinting: Bool = false
+
     /// Moonraker only pushes the objects that changed in a given
     /// `notify_status_update`, not the full subscribed set every time — so
     /// usage tracking (which needs box + print_stats + virtual_sdcard
@@ -64,6 +71,7 @@ final class PrinterSyncEngine {
     func disconnect() {
         client.disconnect()
         connectionState = .disconnected
+        isPrinting = false
         usageTrackingTimer?.invalidate()
         usageTrackingTimer = nil
         hasSeenUsageRelevantPush = false
@@ -123,6 +131,7 @@ final class PrinterSyncEngine {
 
     private func applyUsageTracking(reset: Bool = false) {
         let snapshot = UsageSnapshotParser.parse(latestStatus)
+        isPrinting = snapshot.state == "printing"
         do {
             let result = try usageEngine.apply(snapshot: snapshot, reset: reset)
             lastUsageMessage = result.message

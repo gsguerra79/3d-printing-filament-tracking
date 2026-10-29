@@ -56,6 +56,13 @@ struct InventoryGridView: View {
             }
             .padding(16)
 
+            if case .category(.all) = model.leftSelection {
+                Toggle("Hide retired", isOn: $model.hideRetiredSpools)
+                    .toggleStyle(.checkbox)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+            }
+
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 14) {
                     ForEach(model.filteredSpools) { spool in

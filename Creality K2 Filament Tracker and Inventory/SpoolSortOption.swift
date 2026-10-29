@@ -13,6 +13,8 @@ import Foundation
 
 enum SpoolSortOption: String, CaseIterable, Identifiable, Hashable {
     case type = "Type"
+    case brand = "Brand"
+    case color = "Color"
     case status = "Status"
     case purchaseDate = "Purchase Date"
     case openingDate = "Opening Date"

@@ -115,7 +115,13 @@ struct LeftColumnView: View {
         .background(statusColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    /// "Printing" (checked first) overrides the plain connection-state
+    /// colors/text below with a distinct blue while a print is actually
+    /// running, so a glance at the left column tells connected-but-idle
+    /// apart from actively-printing rather than showing the same green
+    /// "Connected" for both.
     private var statusColor: Color {
+        if model.printerSync?.isPrinting == true { return .blue }
         switch model.printerSync?.connectionState ?? .disconnected {
         case .connected: return .green
         case .connecting: return .yellow
@@ -125,6 +131,7 @@ struct LeftColumnView: View {
     }
 
     private var statusText: String {
+        if model.printerSync?.isPrinting == true { return "Printing" }
         switch model.printerSync?.connectionState ?? .disconnected {
         case .connected: return "Connected"
         case .connecting: return "Connecting…"

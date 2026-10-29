@@ -56,6 +56,10 @@ final class AppModel {
     /// for how this combines with the always-on status tie-breaker.
     var sortOption: SpoolSortOption = .type
 
+    var hideRetiredSpools = UserDefaults.standard.bool(forKey: "hideRetiredSpools") {
+        didSet { UserDefaults.standard.set(hideRetiredSpools, forKey: "hideRetiredSpools") }
+    }
+
     let repository: SpoolRepository?
     private(set) var printerSync: PrinterSyncEngine?
 
@@ -136,6 +140,23 @@ final class AppModel {
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    /// The printer's Fluidd web UI. Confirmed (2026-08-23, against the real
+    /// printer via browser) that this Mac's setup serves Fluidd on the
+    /// exact same host:port already configured for the Moonraker websocket
+    /// connection — a single-port nginx setup, not the port-80-on-the-same-
+    /// host assumption this used to make (which 404'd). So this just reuses
+    /// printer_base_url's host and port as-is rather than rewriting either.
+    /// Nil until a printer address is actually configured.
+    var fluiddURL: URL? {
+        var text = (settings["printer_base_url"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if !text.contains("://") { text = "http://" + text }
+        guard var components = URLComponents(string: text), components.host != nil else { return nil }
+        components.scheme = "http"
+        components.path = "/"
+        return components.url
     }
 
     private func connectToPrinterIfConfigured() {
@@ -246,7 +267,7 @@ final class AppModel {
                 // category's count(for:) stay scoped to activeSpools — Gabriel
                 // wants the All list to double as a way to see retired spools,
                 // without inflating the All count shown elsewhere.
-                return spools
+                return hideRetiredSpools ? activeSpools : spools
             case .open:
                 return activeSpools.filter { $0.status == .open || $0.status == .loaded }
             case .sealed:
@@ -301,6 +322,10 @@ final class AppModel {
         switch sortOption {
         case .type:
             return compareStrings(lhs.material, rhs.material)
+        case .brand:
+            return compareStrings(lhs.brand, rhs.brand)
+        case .color:
+            return compareStrings(lhs.colorName, rhs.colorName)
         case .status:
             return .orderedSame
         case .purchaseDate:

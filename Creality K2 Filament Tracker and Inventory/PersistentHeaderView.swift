@@ -15,26 +15,49 @@ import SwiftUI
 
 struct PersistentHeaderView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openURL) private var openURL
 
     @State private var loadTarget: Spool?
 
     var body: some View {
-        CFSPanelView(
-            onEdit: { spool in
-                if !model.detailPath.contains(spool) {
-                    model.detailPath.append(spool)
-                }
-            },
-            onLoad: { spool in loadTarget = spool },
-            onUnload: { spool in model.unloadSpool(spool) },
-            onRetire: { spool in model.retireSpool(spool) }
-        )
+        VStack(alignment: .leading, spacing: 10) {
+            topBar
+
+            CFSPanelView(
+                onEdit: { spool in
+                    if !model.detailPath.contains(spool) {
+                        model.detailPath.append(spool)
+                    }
+                },
+                onLoad: { spool in loadTarget = spool },
+                onUnload: { spool in model.unloadSpool(spool) },
+                onRetire: { spool in model.retireSpool(spool) }
+            )
+        }
         .padding(.horizontal, 16)
         .padding(.top, 14)
         .padding(.bottom, 4)
         .popover(item: $loadTarget) { spool in
             LoadSpoolPopoverView(spool: spool) { locationId in
                 model.loadSpool(spool, intoLocationId: locationId)
+            }
+        }
+    }
+
+    /// Topmost row of the main window: a quick-launch button to the
+    /// printer's Fluidd web UI, using the same host already configured for
+    /// the Moonraker connection. Hidden until a printer address is actually
+    /// set, since there's nowhere to send it otherwise.
+    @ViewBuilder
+    private var topBar: some View {
+        if let fluiddURL = model.fluiddURL {
+            HStack {
+                Spacer()
+                Button("FLUIDD") {
+                    openURL(fluiddURL)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
             }
         }
     }
