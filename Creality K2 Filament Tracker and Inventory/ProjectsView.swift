@@ -98,10 +98,22 @@ struct ProjectsView: View {
                 Text("Print jobs").font(.headline)
                 Spacer()
                 Menu("Move Selected Jobs") {
-                    Button("Unassigned") { assign(selection, to: "") }
-                    ForEach(model.projects) { target in
+                    let sidebar = model.sidebarProjects
+                    let sidebarIDs = Set(sidebar.map(\.id))
+                    let more = model.projects.filter { !sidebarIDs.contains($0.id) }
+
+                    ForEach(sidebar) { target in
                         Button(target.name) { assign(selection, to: target.id) }
                     }
+                    if !more.isEmpty {
+                        Menu("More Projects") {
+                            ForEach(more) { target in
+                                Button(target.name) { assign(selection, to: target.id) }
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Unassigned") { assign(selection, to: "") }
                 }
                 .disabled(selection.isEmpty)
             }

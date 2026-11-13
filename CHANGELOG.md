@@ -1,3 +1,7 @@
+## Version 3.0.1
+
+- Move Selected Jobs lists sidebar projects first, in sidebar order. Find the rest of the catalog under More Projects.
+
 ## Version 3.0
 
 - Browse cumulative filament usage per project, broken down by material and color.

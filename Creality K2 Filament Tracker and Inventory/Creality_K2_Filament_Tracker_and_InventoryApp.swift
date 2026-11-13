@@ -19,7 +19,7 @@ struct Creality_K2_Filament_Tracker_and_InventoryApp: App {
         // reliably reopen this exact window via `openWindow(id:)` even
         // after it's been fully closed (see AppDelegate.swift for the
         // matching Dock-icon-hiding half of this).
-        WindowGroup("Filament Tracker v3.0", id: "main") {
+        WindowGroup("Filament Tracker v3.0.1", id: "main") {
             ContentView()
                 .environment(model)
                 .task {
