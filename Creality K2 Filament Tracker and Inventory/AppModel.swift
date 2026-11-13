@@ -15,6 +15,12 @@ final class AppModel {
     var spools: [Spool] = []
     var locations: [Location] = []
     var settings: [String: String] = [:]
+    var printJobs: [ProjectJob] = []
+    var projectCatalog = ProjectCatalog()
+    var projectPreferences = ProjectPreferences()
+    var projectFolder: URL?
+    var scanningProjects = false
+
     var usageEvents: [UsageEventDisplay] = []
     var pendingUsageEvents: [PendingUsageEvent] = []
     var loadError: String?
@@ -63,6 +69,18 @@ final class AppModel {
 
         importCrealityCatalogIfNeeded()
         reload()
+        if let value = settings["project_preferences"],
+           let decoded = try? JSONDecoder().decode(ProjectPreferences.self, from: Data(value.utf8)) {
+            projectPreferences = decoded
+        }
+        var staleBookmark = false
+        if let value = settings["project_catalog_bookmark"], let data = Data(base64Encoded: value),
+           let folder = try? URL(resolvingBookmarkData: data, options: .withSecurityScope,
+                                 bookmarkDataIsStale: &staleBookmark) {
+            projectFolder = folder
+        } else if let path = settings["project_catalog_folder"] {
+            projectFolder = URL(fileURLWithPath: path, isDirectory: true)
+        }
         connectToPrinterIfConfigured()
     }
 
@@ -101,6 +119,7 @@ final class AppModel {
             spools = try repository.fetchAllSpools()
             locations = try repository.fetchLocations()
             settings = try repository.fetchSettings()
+            printJobs = try repository.projectJobs()
             usageEvents = try repository.fetchRecentUsageEvents(limit: 50)
             pendingUsageEvents = try repository.fetchPendingUsageEvents()
             loadError = nil
@@ -245,7 +264,7 @@ final class AppModel {
             }
         case .filamentType(let type):
             return activeSpools.filter { type.matches($0.material) }
-        case .settings:
+        case .settings, .recentJobs, .project:
             return []
         }
     }

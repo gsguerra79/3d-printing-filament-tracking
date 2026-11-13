@@ -10,6 +10,10 @@ struct ContentAreaView: View {
     @ViewBuilder
     var body: some View {
         switch model.leftSelection {
+        case .recentJobs:
+            ProjectsView(projectID: nil)
+        case .project(let id):
+            ProjectsView(projectID: id)
         case .category(let category):
             InventoryGridView(title: category.rawValue)
         case .filamentType(let type):

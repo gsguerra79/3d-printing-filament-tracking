@@ -127,7 +127,7 @@ extension SpoolRepository {
         try db.query(
             """
             SELECT u.id, u.spool_id, u.grams_used, u.project, u.notes, u.created_at,
-                   s.material, s.brand, s.color_name, s.color_hex, s.creality_name
+                   COALESCE(u.material_at_use, s.material), s.brand, COALESCE(u.color_at_use, s.color_name), s.color_hex, s.creality_name
             FROM usage_events u
             JOIN spools s ON s.id = u.spool_id
             ORDER BY u.created_at DESC, u.id DESC

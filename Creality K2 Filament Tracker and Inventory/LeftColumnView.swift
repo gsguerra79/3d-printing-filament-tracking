@@ -17,53 +17,71 @@ struct LeftColumnView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        @Bindable var model = model
-
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 printerStatusCard
-                statBoxRow
             }
             .padding(14)
 
             Divider()
 
-            List(selection: leftSelectionBinding) {
-                Section("Inventory") {
-                    ForEach(InventoryCategory.allCases) { category in
-                        Label(category.rawValue, systemImage: category.systemImage)
-                            .badge(model.count(for: category))
-                            .tag(LeftMenuItem.category(category))
+            List {
+                Section("Projects") {
+                    navigationRow("Recent Jobs", icon: "clock", item: .recentJobs)
+                    ForEach(model.sidebarProjects) { project in
+                        navigationRow(project.name, icon: "folder", item: .project(project.id))
                     }
                 }
 
-                Section("Filament Types") {
-                    ForEach(FilamentType.allCases) { type in
-                        Label(type.rawValue, systemImage: type.systemImage)
-                            .badge(model.count(for: type))
-                            .tag(LeftMenuItem.filamentType(type))
-                    }
-                }
-
-                Section("Settings") {
-                    ForEach(SettingsPage.allCases) { page in
-                        Label(page.rawValue, systemImage: page.systemImage)
-                            .tag(LeftMenuItem.settings(page))
-                    }
-                }
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Inventory").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                statBoxRow
+                ForEach(InventoryCategory.allCases) { category in
+                    navigationRow(category.rawValue, icon: category.systemImage,
+                                  item: .category(category), count: model.count(for: category))
+                }
+                Text("Filament Types").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(FilamentType.allCases) { type in
+                    navigationRow(type.rawValue, icon: type.systemImage,
+                                  item: .filamentType(type), count: model.count(for: type))
+                }
+                Divider()
+                Text("Settings").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(SettingsPage.allCases) { page in
+                    navigationRow(page.rawValue, icon: page.systemImage, item: .settings(page))
+                }
+            }
+            .padding(14)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: 240)
         .background(.quaternary.opacity(0.35))
     }
 
-    private var leftSelectionBinding: Binding<LeftMenuItem?> {
-        Binding(
-            get: { model.leftSelection },
-            set: { newValue in if let newValue { model.leftSelection = newValue } }
-        )
+    private func navigationRow(_ title: String, icon: String, item: LeftMenuItem, count: Int? = nil) -> some View {
+        Button {
+            model.leftSelection = item
+        } label: {
+            HStack {
+                Label(title, systemImage: icon)
+                Spacer(minLength: 4)
+                if let count {
+                    Text(count, format: .number).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(model.leftSelection == item ? .isSelected : [])
+        .background(model.leftSelection == item ? Color.accentColor.opacity(0.12) : Color.clear)
+        .listRowBackground(model.leftSelection == item ? Color.accentColor.opacity(0.18) : Color.clear)
     }
 
     private var statBoxRow: some View {

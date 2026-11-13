@@ -81,6 +81,8 @@ enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
 }
 
 enum LeftMenuItem: Hashable {
+    case recentJobs
+    case project(String)
     case category(InventoryCategory)
     case filamentType(FilamentType)
     case settings(SettingsPage)

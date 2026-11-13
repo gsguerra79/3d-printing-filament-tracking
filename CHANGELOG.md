@@ -1,3 +1,11 @@
+## Version 3.0
+
+- Browse cumulative filament usage per project, broken down by material and color.
+- Match print jobs against saved Creality Print projects. Unique matches group automatically, and ambiguous matches can be reviewed as suggestions.
+- Rename projects, move selected jobs using the full project catalog, or merge into another visible sidebar project using search.
+- Keep Inventory and Settings visible at the bottom of the sidebar while Projects scrolls independently.
+- Record material and color when new print usage is logged so later spool edits preserve historical totals.
+
 ## Version 2.3
 
 Version 2.3 carries forward the same bulk Add Spools and compact Edit workflows shipped in 2.2. This release updates the version to 2.3 (build 23).

@@ -99,6 +99,27 @@ final class FilamentDatabase {
         }
         try exec("PRAGMA foreign_keys = ON;")
         try createSchemaIfNeeded()
+        var usageColumns = Set<String>()
+        try query("PRAGMA table_info(usage_events)") { row in
+            if let name = row.stringColumn(1) { usageColumns.insert(name) }
+        }
+        if !usageColumns.contains("material_at_use") {
+            try exec("ALTER TABLE usage_events ADD COLUMN material_at_use TEXT")
+        }
+        if !usageColumns.contains("color_at_use") {
+            try exec("ALTER TABLE usage_events ADD COLUMN color_at_use TEXT")
+        }
+        try exec("""
+            CREATE TRIGGER IF NOT EXISTS snapshot_usage_labels AFTER INSERT ON usage_events
+            BEGIN
+                UPDATE usage_events
+                SET material_at_use = COALESCE(NEW.material_at_use,
+                        (SELECT material FROM spools WHERE id = NEW.spool_id)),
+                    color_at_use = COALESCE(NEW.color_at_use,
+                        (SELECT color_name FROM spools WHERE id = NEW.spool_id))
+                WHERE id = NEW.id;
+            END;
+            """)
     }
 
     deinit {
