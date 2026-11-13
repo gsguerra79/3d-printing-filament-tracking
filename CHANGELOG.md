@@ -1,3 +1,7 @@
+## Version 2.3
+
+Version 2.3 carries forward the same bulk Add Spools and compact Edit workflows shipped in 2.2. This release updates the version to 2.3 (build 23).
+
 ## Version 2.2
 
 - Add multiple identical sealed spools in one operation, with a separate inventory record for each spool.
