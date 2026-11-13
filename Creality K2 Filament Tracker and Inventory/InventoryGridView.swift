@@ -2,19 +2,7 @@
 //  InventoryGridView.swift
 //  Creality K2 Filament Tracker and Inventory
 //
-//  The bottom-right panel's card grid for a selected Inventory Category or
-//  Filament Type — the rich, colorful `SpoolCardView` grid from the original
-//  web app (weight bars, status/location tags), not a plain Table. Tapping a
-//  card pushes SpoolDetailPageView via NavigationLink(value:); its own menu
-//  handles Load/Unload/Retire without triggering that push (Edit does, since
-//  it's the same destination). Log Usage and Delete both live on the detail
-//  page now rather than cluttering this quick menu — reach them via Edit.
-//
-//  Deliberately has no `.toolbar`/`.navigationTitle`/`.searchable` — the
-//  title, search field, and Add button all live in this view's own header
-//  row instead, so the app's top window bar stays fixed on just the app
-//  name rather than changing per screen.
-//
+//  Inventory cards with explicit actions in each card menu.
 
 import SwiftUI
 
@@ -26,6 +14,9 @@ struct InventoryGridView: View {
     let title: String
 
     @State private var loadTarget: Spool?
+    @State private var showingAdd = false
+    @State private var addedMessage: String?
+
 
     private let columns = [GridItem(.adaptive(minimum: 220), spacing: 14)]
 
@@ -48,7 +39,7 @@ struct InventoryGridView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 240)
                 Button {
-                    model.createBlankSpool()
+                    showingAdd = true
                 } label: {
                     Label("Add", systemImage: "plus")
                 }
@@ -63,21 +54,24 @@ struct InventoryGridView: View {
                     .padding(.bottom, 12)
             }
 
+            if let addedMessage {
+                Label(addedMessage, systemImage: "checkmark.circle")
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 14) {
                     ForEach(model.filteredSpools) { spool in
-                        NavigationLink(value: spool) {
-                            SpoolCardView(
-                                spool: spool,
-                                locationName: model.locationName(for: spool.locationId),
-                                isActive: model.activeSpoolIds.contains(spool.id),
-                                onEdit: { model.detailPath.append(spool) },
-                                onLoad: { loadTarget = spool },
-                                onUnload: { model.unloadSpool(spool) },
-                                onRetire: { model.retireSpool(spool) }
-                            )
-                        }
-                        .buttonStyle(.plain)
+                        SpoolCardView(
+                            spool: spool,
+                            locationName: model.locationName(for: spool.locationId),
+                            isActive: model.activeSpoolIds.contains(spool.id),
+                            onEdit: { model.editingSpool = spool },
+                            onLoad: { loadTarget = spool },
+                            onUnload: { model.unloadSpool(spool) },
+                            onRetire: { model.retireSpool(spool) }
+                        )
                     }
                 }
                 .padding([.horizontal, .bottom], 16)
@@ -90,6 +84,11 @@ struct InventoryGridView: View {
                         description: Text("Try a different filter, or click + Add to add one.")
                     )
                 }
+            }
+        }
+        .sheet(isPresented: $showingAdd) {
+            SpoolEditorView { count in
+                addedMessage = count == 1 ? "1 spool added to Sealed Stock." : "\(count) spools added to Sealed Stock."
             }
         }
         .popover(item: $loadTarget) { spool in

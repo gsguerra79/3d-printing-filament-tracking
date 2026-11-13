@@ -1,55 +1,49 @@
-//
-//  SpoolDetailPageView.swift
-//  Creality K2 Filament Tracker and Inventory
-//
-//  A single spool's detail page — pushed onto the bottom-right
-//  NavigationStack from a card's tap (see InventoryGridView /
-//  PersistentHeaderView). Built as a plain compact form (no Form/Section
-//  chrome, paired fields side by side) rather than the old full-width
-//  stacked layout, specifically to minimize scrolling: no Color Hex,
-//  Diameter, or Barcode fields, and every remaining field pairs up with
-//  another on the same row. Fields edit in place and autosave (debounced
-//  ~450ms) rather than requiring an explicit Save button, matching how
-//  native macOS inspectors (Notes, Reminders, Finder's Get Info) behave.
-//
-//  Deliberately has no `.toolbar`/`.navigationTitle` — Back/Load/
-//  Retire live in this view's own header row, and Delete is a separated
-//  button at the bottom, so the app's top window bar stays fixed on just
-//  the app name rather than changing per screen.
-//
-
 import SwiftUI
 import AppKit
 
-struct SpoolDetailPageView: View {
+struct SpoolEditorView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
-    let spool: Spool
+    let spool: Spool?
+    var onAdd: ((Int) -> Void)?
+    @State private var quantity = 1
+    @State private var confirmingDelete = false
+    @State private var saveError: String?
 
     @State private var draft: SpoolDraft
     @State private var brands: [String] = []
     @State private var types: [String] = []
     @State private var names: [CatalogNameOption] = []
     @State private var isGenericBrand = true
-    @State private var saveTask: Task<Void, Never>?
-    @State private var showingLoadPopover = false
-    @State private var confirmingDelete = false
-
-    init(spool: Spool) {
+    init(spool: Spool? = nil, onAdd: ((Int) -> Void)? = nil) {
         self.spool = spool
-        _draft = State(initialValue: SpoolDraft(spool: spool))
+        self.onAdd = onAdd
+        _draft = State(initialValue: spool.map { SpoolDraft(spool: $0) } ?? SpoolDraft())
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            actionRow
+            Text(spool == nil ? "Add Spools" : "Edit Spool")
+                .font(.title2.bold())
+                .padding(16)
+
 
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
+                VStack(alignment: .leading, spacing: spool == nil ? 16 : 10) {
+                    if spool == nil {
+                        HStack {
+                            Stepper("Quantity", value: $quantity, in: 1...999)
+                                .fixedSize()
+                            TextField("Quantity", value: $quantity, format: .number)
+                                .accessibilityLabel("Quantity")
+                                .frame(width: 64)
+                            Spacer()
+                            Text("Sealed · Sealed Stock").foregroundStyle(.secondary)
+                        }
+                    }
 
                     pairedRow {
                         field("Brand") {
@@ -117,63 +111,87 @@ struct SpoolDetailPageView: View {
                         }
                     }
 
-                    pairedRow {
-                        field("Status") {
-                            Picker("", selection: statusSelection) {
-                                ForEach(Spool.Status.allCases, id: \.self) { status in
-                                    Text(status.rawValue.capitalized).tag(status)
+                    if spool != nil {
+                        pairedRow {
+                            field("Status") {
+                                Picker("", selection: statusSelection) {
+                                    ForEach(Spool.Status.allCases, id: \.self) { status in
+                                        Text(status.rawValue.capitalized).tag(status)
+                                    }
                                 }
+                                .labelsHidden()
                             }
-                            .labelsHidden()
-                        }
-                        field("Location") {
-                            Picker("", selection: $draft.locationId) {
-                                ForEach(model.locations) { location in
-                                    Text(location.name).tag(Optional(location.id))
+                            field("Location") {
+                                Picker("", selection: $draft.locationId) {
+                                    ForEach(model.locations) { location in
+                                        Text(location.name).tag(Optional(location.id))
+                                    }
                                 }
+                                .labelsHidden()
                             }
-                            .labelsHidden()
                         }
-                    }
 
-                    pairedRow {
-                        field("Original Weight") { weightTextField($draft.originalWeightG) }
-                        field("Remaining Weight") { weightTextField($draft.remainingWeightG) }
-                    }
-
-                    pairedRow {
-                        field("Purchased") {
-                            SpoolDatePicker(title: "Purchased", value: $draft.purchasedAt)
+                        pairedRow {
+                            field("Original Weight") { weightTextField($draft.originalWeightG) }
+                            field("Remaining Weight") { weightTextField($draft.remainingWeightG) }
                         }
-                        field("Opened") {
-                            SpoolDatePicker(title: "Opened", value: $draft.openedAt)
+
+                        pairedRow {
+                            field("Purchased") {
+                                SpoolDatePicker(title: "Purchased", value: $draft.purchasedAt)
+                            }
+                            field("Opened") {
+                                SpoolDatePicker(title: "Opened", value: $draft.openedAt)
+                            }
+                        }
+                    } else {
+                        pairedRow {
+                            field("Weight per spool") { weightTextField($draft.originalWeightG) }
+                            field("Purchased") {
+                                SpoolDatePicker(title: "Purchased", value: $draft.purchasedAt)
+                            }
                         }
                     }
                     TextField("Notes", text: $draft.notes, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(2...4)
 
-                    Button(role: .destructive) {
-                        confirmingDelete = true
-                    } label: {
-                        Label("Delete Spool", systemImage: "trash")
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    }
-                    .padding(.top, 4)
                 }
                 .padding(16)
             }
-        }
-        .confirmationDialog(
-            "Delete this spool?",
-            isPresented: $confirmingDelete,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                model.deleteSpool(spool)
+            Divider()
+            HStack {
+                if let saveError { Text(saveError).foregroundStyle(.red) }
+                if spool != nil {
+                    Button("Delete Spool", role: .destructive) { confirmingDelete = true }
+                }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(spool != nil ? "OK" : quantity == 1 ? "Add 1 Spool" : "Add \(quantity) Spools") {
+                    do {
+                        try model.saveSpoolDraft(draft, id: spool?.id, quantity: quantity)
+                        if spool == nil { onAdd?(quantity) }
+                        dismiss()
+                    } catch {
+                        saveError = error.localizedDescription
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave)
             }
-        } message: {
-            Text("This can't be undone.")
+            .padding(16)
+        }
+        .frame(width: 550, height: spool == nil ? 460 : 450)
+        .confirmationDialog("Delete this spool?", isPresented: $confirmingDelete) {
+            Button("Delete", role: .destructive) {
+                guard let spool else { return }
+                do {
+                    try model.deleteSpool(spool)
+                    dismiss()
+                } catch {
+                    saveError = error.localizedDescription
+                }
+            }
         }
         .onAppear {
             if draft.locationId == nil {
@@ -184,57 +202,13 @@ struct SpoolDetailPageView: View {
             isGenericBrand = draft.crealityBrand.caseInsensitiveCompare("Generic") == .orderedSame
             refreshBrands()
         }
-        .onChange(of: draft) { _, newValue in
-            saveTask?.cancel()
-            let id = spool.id
-            saveTask = Task {
-                try? await Task.sleep(for: .milliseconds(450))
-                guard !Task.isCancelled else { return }
-                model.updateSpool(id: id, draft: newValue)
-            }
-        }
     }
 
-    private var actionRow: some View {
-        HStack {
-            Button {
-                dismiss()
-            } label: {
-                Label("Back", systemImage: "chevron.left")
-            }
-            Spacer()
-            Button {
-                showingLoadPopover = true
-            } label: {
-                Label("Load…", systemImage: "tray.and.arrow.down")
-            }
-            .popover(isPresented: $showingLoadPopover) {
-                LoadSpoolPopoverView(spool: spool) { locationId in
-                    model.loadSpool(spool, intoLocationId: locationId)
-                }
-            }
-            Button {
-                model.retireSpool(spool)
-            } label: {
-                Label("Retire", systemImage: "archivebox")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    private var header: some View {
-        HStack(spacing: 14) {
-            SpoolGraphic(colorHex: draft.colorHex, diameter: 48)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(headerTitle)
-                    .font(.title3.weight(.semibold))
-                Text(draft.material)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
+    private var canSave: Bool {
+        !draft.colorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (!isGenericBrand || !draft.brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            && draft.originalWeightG > 0
+            && (spool == nil ? (1...999).contains(quantity) : (0...draft.originalWeightG).contains(draft.remainingWeightG))
     }
 
     @ViewBuilder
@@ -292,11 +266,6 @@ struct SpoolDetailPageView: View {
                 )
             }
         )
-    }
-
-    private var headerTitle: String {
-        let brand = draft.brand.isEmpty ? draft.crealityBrand : draft.brand
-        return draft.colorName.isEmpty ? brand : "\(brand) \(draft.colorName)"
     }
 
     private func refreshBrands() {

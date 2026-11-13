@@ -16,6 +16,8 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
+
         HStack(spacing: 0) {
             LeftColumnView()
 
@@ -40,6 +42,9 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                     .background(.red)
             }
+        }
+        .sheet(item: $model.editingSpool) { spool in
+            SpoolEditorView(spool: spool)
         }
         .alert(
             "Action Failed",

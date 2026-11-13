@@ -13,6 +13,19 @@
 import Foundation
 import SQLite3
 
+enum SpoolSaveError: LocalizedError {
+    case inventoryUnavailable, invalidQuantity, missingStorage, missingSpool
+
+    var errorDescription: String? {
+        switch self {
+        case .inventoryUnavailable: return "Inventory is unavailable."
+        case .invalidQuantity: return "Enter a quantity from 1 to 999."
+        case .missingStorage: return "Sealed Stock is unavailable."
+        case .missingSpool: return "This spool no longer exists."
+        }
+    }
+}
+
 extension SpoolRepository {
     // MARK: - Catalog lookups (for the spool editor's cascading pickers)
 
@@ -162,7 +175,26 @@ extension SpoolRepository {
         return status
     }
 
-    @discardableResult
+    func addSealedSpools(_ draft: SpoolDraft, quantity: Int) throws {
+        guard (1...999).contains(quantity) else { throw SpoolSaveError.invalidQuantity }
+        guard let location = try fetchLocations().first(where: { $0.name == "Sealed Stock" }) else {
+            throw SpoolSaveError.missingStorage
+        }
+        var sealed = draft
+        sealed.status = .sealed
+        sealed.locationId = location.id
+        sealed.openedAt = ""
+        sealed.remainingWeightG = sealed.originalWeightG
+        try db.run("BEGIN IMMEDIATE")
+        do {
+            for _ in 0..<quantity { _ = try createSpool(sealed) }
+            try db.run("COMMIT")
+        } catch {
+            try? db.run("ROLLBACK")
+            throw error
+        }
+    }
+
     func createSpool(_ draft: SpoolDraft) throws -> Int64 {
         let locations = try fetchLocations()
         let now = ISO8601DateFormatter().string(from: Date())
@@ -220,7 +252,7 @@ extension SpoolRepository {
     }
 
     func updateSpool(id: Int64, draft: SpoolDraft) throws {
-        guard let existing = try fetchSpool(id: id) else { return }
+        guard let existing = try fetchSpool(id: id) else { throw SpoolSaveError.missingSpool }
         let locations = try fetchLocations()
         let now = ISO8601DateFormatter().string(from: Date())
         let today = String(now.prefix(10))

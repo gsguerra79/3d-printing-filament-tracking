@@ -1,3 +1,10 @@
+## Version 2.2
+
+- Add multiple identical sealed spools in one operation, with a separate inventory record for each spool.
+- Add and Edit open compact dialogs. Cancel discards the draft, and OK saves edits to the selected spool.
+- Use Edit from the spool card menu. Clicking the card body keeps the inventory grid open.
+- Delete Spool is available in the Edit dialog and requires confirmation.
+
 # Version 2.1 — October 28, 2026
 
 - Enter custom spool color names and choose an independent icon color with the native color picker.

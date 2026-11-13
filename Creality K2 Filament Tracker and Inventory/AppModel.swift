@@ -6,16 +6,6 @@
 //  publishes the data SwiftUI views read. Printer sync (websocket listener)
 //  hangs off this same object.
 //
-//  Navigation model (left column + persistent header + content area):
-//  `leftSelection` is the single source of truth for what the bottom-right
-//  panel shows — an inventory category's card grid, or a settings page.
-//  `detailPath` is a NavigationStack path pushed with a `Spool` when a card
-//  is tapped, giving a native back button to return to whichever category
-//  was showing. The persistent top-right header (CFS + printer status)
-//  never depends on either of these — it's always visible regardless of
-//  what's selected on the left.
-//
-
 import Foundation
 import Observation
 
@@ -33,18 +23,8 @@ final class AppModel {
     var crealityCatalogMessage: String?
     var actionError: String?
 
-    /// What the left column has selected — drives the bottom-right content
-    /// area. Switching this pops any pushed spool detail, since a detail
-    /// page only makes sense in the context of the category it was opened
-    /// from.
-    var leftSelection: LeftMenuItem = .category(.all) {
-        didSet { detailPath = [] }
-    }
-
-    /// The bottom-right NavigationStack's path — pushing a `Spool` shows its
-    /// detail page (with an automatic native back button); popping returns
-    /// to whichever card grid or settings page is current.
-    var detailPath: [Spool] = []
+    var leftSelection: LeftMenuItem = .category(.all)
+    var editingSpool: Spool?
 
     // Secondary refine-filter available in the inventory grid's toolbar,
     // layered on top of whatever left-column category is already narrowed
@@ -126,16 +106,6 @@ final class AppModel {
             loadError = nil
             if printerAddressDraft.isEmpty {
                 printerAddressDraft = settings["printer_base_url"] ?? ""
-            }
-            // Keep a pushed detail page's contents fresh (e.g. after an
-            // autosave commits), and drop it if the spool it was showing
-            // was deleted out from under it.
-            if let openId = detailPath.last?.id {
-                if let refreshed = spools.first(where: { $0.id == openId }) {
-                    detailPath[detailPath.count - 1] = refreshed
-                } else {
-                    detailPath.removeLast()
-                }
             }
         } catch {
             loadError = error.localizedDescription
@@ -402,39 +372,20 @@ final class AppModel {
         }
     }
 
-    /// Creates a spool with placeholder defaults and immediately pushes its
-    /// detail page, so it opens ready to fill in — mirrors how Notes/
-    /// Reminders hand you a blank item to type into rather than popping a
-    /// separate "new item" dialog. Switches out of a settings page first,
-    /// since a new spool belongs in an inventory category, not on top of
-    /// (say) the Printer Connection page.
-    @discardableResult
-    func createBlankSpool() -> Int64? {
-        guard let repository else { return nil }
-        do {
-            let id = try repository.createSpool(SpoolDraft())
-            actionError = nil
-            if case .settings = leftSelection {
-                leftSelection = .category(.all)
-            }
-            reload()
-            if let spool = spools.first(where: { $0.id == id }) {
-                detailPath = [spool]
-            }
-            return id
-        } catch {
-            actionError = error.localizedDescription
-            return nil
+    func saveSpoolDraft(_ draft: SpoolDraft, id: Int64?, quantity: Int) throws {
+        guard let repository else { throw SpoolSaveError.inventoryUnavailable }
+        if let id {
+            try repository.updateSpool(id: id, draft: draft)
+        } else {
+            try repository.addSealedSpools(draft, quantity: quantity)
         }
+        reload()
     }
 
-    func updateSpool(id: Int64, draft: SpoolDraft) {
-        perform { try $0.updateSpool(id: id, draft: draft) }
-    }
-
-    func deleteSpool(_ spool: Spool) {
-        perform { try $0.deleteSpool(id: spool.id) }
-        detailPath.removeAll { $0.id == spool.id }
+    func deleteSpool(_ spool: Spool) throws {
+        guard let repository else { throw SpoolSaveError.inventoryUnavailable }
+        try repository.deleteSpool(id: spool.id)
+        reload()
     }
 
     func retireSpool(_ spool: Spool) {

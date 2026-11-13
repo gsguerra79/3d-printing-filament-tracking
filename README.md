@@ -1,6 +1,6 @@
 # Creality K2 Filament Tracker and Inventory
 
-Current release: **2.1** (build 21). See [CHANGELOG.md](CHANGELOG.md) for changes.
+Current release: **2.2** (build 22). See [CHANGELOG.md](CHANGELOG.md) for changes.
 
 A native macOS app for tracking filament spools and inventory for a Creality
 K2 Plus 3D printer — what's loaded in each CFS (Color Filament System) slot
